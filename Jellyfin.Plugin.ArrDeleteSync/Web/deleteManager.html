@@ -1,0 +1,42 @@
+<!-- Web/deleteManager.html -->
+<!DOCTYPE html>
+<html>
+<head><title>Delete Manager</title></head>
+<body>
+  <div id="ArrDeleteSyncManagerPage" data-role="page" class="page type-interior">
+    <div data-role="content">
+      <div class="content-primary">
+        <h1>Delete Manager</h1>
+
+        <div class="verticalSection">
+          <input is="emby-input" type="text" id="LibrarySearch" label="Search library" />
+          <div id="LibraryResults"></div>
+        </div>
+
+        <div id="PreviewSection" class="verticalSection" style="display:none">
+          <h2>Confirm delete</h2>
+          <div id="PreviewContent"></div>
+          <input is="emby-input" type="text" id="ConfirmNameInput" style="display:none" label="Type the item name to confirm" />
+          <button is="emby-button" type="button" id="ConfirmDeleteButton">Delete</button>
+          <button is="emby-button" type="button" id="CancelDeleteButton">Cancel</button>
+        </div>
+
+        <div id="BreakerBanner" class="verticalSection" style="display:none; color: red;">
+          Circuit breaker tripped — deletes are disabled until an admin resets it in Settings.
+        </div>
+
+        <div class="verticalSection">
+          <h2>Retry Queue</h2>
+          <div id="RetryQueueList"></div>
+        </div>
+
+        <div class="verticalSection">
+          <h2>Audit Log</h2>
+          <div id="AuditLogList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="deleteManager.js"></script>
+</body>
+</html>

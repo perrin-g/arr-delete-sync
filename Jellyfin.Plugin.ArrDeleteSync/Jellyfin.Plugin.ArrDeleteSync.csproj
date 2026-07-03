@@ -12,5 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Configuration\configPage.html" />
+    <EmbeddedResource Include="Web\deleteManager.html" />
+    <EmbeddedResource Include="Web\deleteManager.js" />
   </ItemGroup>
 </Project>

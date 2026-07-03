@@ -44,6 +44,22 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = Name,
                 EmbeddedResourcePath = string.Format("{0}.Configuration.configPage.html", GetType().Namespace)
+            },
+            new PluginPageInfo
+            {
+                Name = "deleteManager",
+                EmbeddedResourcePath = string.Format("{0}.Web.deleteManager.html", GetType().Namespace)
+            },
+            // Registered separately, keyed by the exact literal string used in
+            // deleteManager.html's <script src="deleteManager.js">. Jellyfin's dashboard fetches
+            // an embedded page's script tags by resolving their src against a page Name, not a
+            // filesystem path — PluginPageInfo has no dedicated "associated script" member (see
+            // Task 12 report for the reflection that confirmed this), so an external .js file
+            // needs its own entry whose Name matches the <script> src verbatim.
+            new PluginPageInfo
+            {
+                Name = "deleteManager.js",
+                EmbeddedResourcePath = string.Format("{0}.Web.deleteManager.js", GetType().Namespace)
             }
         };
     }
