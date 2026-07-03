@@ -70,6 +70,8 @@ public class ArrDeleteSyncController : ControllerBase
         }
         else
         {
+            entry.AttemptCount++;
+            entry.NextRetryAtUtc = DateTime.UtcNow.AddMinutes(Math.Pow(2, entry.AttemptCount) * 5);
             await _retryQueueStore.UpsertAsync(entry);
         }
 

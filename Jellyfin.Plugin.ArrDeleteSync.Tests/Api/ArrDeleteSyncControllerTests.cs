@@ -86,6 +86,31 @@ public class ArrDeleteSyncControllerTests
     }
 
     [Fact]
+    public async Task RetryEntry_AppliesExponentialBackoff_OnFailure()
+    {
+        var entryId = Guid.NewGuid();
+        var controller = MakeController(out var orchestrator, out var queue, out _, out _);
+        queue.Setup(q => q.GetAllAsync()).ReturnsAsync(new[] { new RetryQueueEntry
+        {
+            Id = entryId, JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie,
+            ArrDeleteStatus = DeleteStepStatus.Succeeded, JellyfinCleanupStatus = DeleteStepStatus.Failed,
+            AttemptCount = 0,
+            NextRetryAtUtc = DateTime.UtcNow
+        }});
+        orchestrator.Setup(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>())).ReturnsAsync(false);
+
+        var beforeCall = DateTime.UtcNow;
+        var result = await controller.RetryEntry(entryId);
+
+        Assert.IsType<OkObjectResult>(result);
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e =>
+            e.Id == entryId &&
+            e.AttemptCount == 1 &&
+            e.NextRetryAtUtc > beforeCall)), Times.Once);
+        queue.Verify(q => q.RemoveAsync(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ResetCircuitBreaker_CallsReset()
     {
         var controller = MakeController(out _, out _, out _, out var breaker);
