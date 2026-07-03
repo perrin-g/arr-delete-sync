@@ -111,13 +111,29 @@ public class ArrClientTests
         Assert.Contains("deleteFiles=true", handler.LastRequest.RequestUri!.ToString());
     }
 
+    private static HttpResponseMessage RouteEpisodeAndEpisodeFile(HttpRequestMessage req, string episodeListJson, string episodeFileListJson)
+    {
+        var url = req.RequestUri!.ToString();
+        if (url.Contains("/api/v3/episodefile?", StringComparison.Ordinal))
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(episodeFileListJson) };
+        }
+
+        if (url.Contains("/api/v3/episode?", StringComparison.Ordinal))
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(episodeListJson) };
+        }
+
+        throw new InvalidOperationException($"Unexpected URL requested: {url}");
+    }
+
     [Fact]
     public async Task GetEpisodeFileCoverageCount_ReturnsOne_ForNormalSingleEpisodeFile()
     {
-        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("[{\"id\":100,\"episodeIds\":[500]}]")
-        });
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodeAndEpisodeFile(
+            req,
+            episodeListJson: "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]",
+            episodeFileListJson: "[{\"id\":100,\"episodeIds\":[500]}]"));
         var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
 
         var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
@@ -128,14 +144,47 @@ public class ArrClientTests
     [Fact]
     public async Task GetEpisodeFileCoverageCount_ReturnsTwo_ForCombinedMultiEpisodeFile()
     {
-        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("[{\"id\":100,\"episodeIds\":[500,501]}]")
-        });
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodeAndEpisodeFile(
+            req,
+            episodeListJson: "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]",
+            episodeFileListJson: "[{\"id\":100,\"episodeIds\":[500,501]}]"));
         var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
 
         var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
 
         Assert.Equal(2, count);
+    }
+
+    [Fact]
+    public async Task GetEpisodeFileCoverageCount_SelectsCorrectFile_WhenSeriesHasMultipleEpisodeFiles()
+    {
+        // Episode 1x01 maps to episodeFileId 100 (a single-episode file). The episodefile
+        // response also contains an unrelated multi-episode file (id 200) for some other
+        // episode — the old buggy implementation would have returned that file's count (2)
+        // because it just took whichever file was first in the array. The fix must select
+        // file 100 specifically and return 1.
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodeAndEpisodeFile(
+            req,
+            episodeListJson: "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]",
+            episodeFileListJson: "[{\"id\":200,\"episodeIds\":[600,601]},{\"id\":100,\"episodeIds\":[500]}]"));
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task GetEpisodeFileCoverageCount_ReturnsNegativeOne_WhenEpisodeNotFoundOrHasNoFile()
+    {
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodeAndEpisodeFile(
+            req,
+            episodeListJson: "[{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":100}]",
+            episodeFileListJson: "[]"));
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.Equal(-1, count);
     }
 }

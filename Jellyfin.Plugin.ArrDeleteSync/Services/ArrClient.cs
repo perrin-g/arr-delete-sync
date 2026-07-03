@@ -80,31 +80,67 @@ public class ArrClient : IArrClient
 
     public async Task<int> GetEpisodeFileCoverageCountAsync(int seriesInternalId, int seasonNumber, int episodeNumber)
     {
-        var url = $"{_baseUrl}/api/v3/episodefile?seriesId={seriesInternalId}";
+        var episodeUrl = $"{_baseUrl}/api/v3/episode?seriesId={seriesInternalId}";
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("X-Api-Key", _apiKey);
-            using var response = await _httpClient.SendAsync(request);
+            using var episodeRequest = new HttpRequestMessage(HttpMethod.Get, episodeUrl);
+            episodeRequest.Headers.Add("X-Api-Key", _apiKey);
+            using var episodeResponse = await _httpClient.SendAsync(episodeRequest);
 
-            if (!response.IsSuccessStatusCode)
+            if (!episodeResponse.IsSuccessStatusCode)
             {
                 return -1; // caller treats negative as indeterminate and blocks conservatively
             }
 
-            var body = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(body);
+            var episodeBody = await episodeResponse.Content.ReadAsStringAsync();
+            using var episodeDoc = JsonDocument.Parse(episodeBody);
 
-            foreach (var file in doc.RootElement.EnumerateArray())
+            var episodeFileId = 0;
+            var found = false;
+            foreach (var episode in episodeDoc.RootElement.EnumerateArray())
             {
-                if (file.TryGetProperty("episodeIds", out var episodeIds))
+                if (episode.TryGetProperty("seasonNumber", out var s) && s.GetInt32() == seasonNumber &&
+                    episode.TryGetProperty("episodeNumber", out var e) && e.GetInt32() == episodeNumber)
+                {
+                    found = true;
+                    if (episode.TryGetProperty("episodeFileId", out var fileIdProp))
+                    {
+                        episodeFileId = fileIdProp.GetInt32();
+                    }
+
+                    break;
+                }
+            }
+
+            if (!found || episodeFileId == 0)
+            {
+                return -1; // episode not found, or has no file — can't confirm coverage
+            }
+
+            var episodeFileUrl = $"{_baseUrl}/api/v3/episodefile?seriesId={seriesInternalId}";
+            using var fileRequest = new HttpRequestMessage(HttpMethod.Get, episodeFileUrl);
+            fileRequest.Headers.Add("X-Api-Key", _apiKey);
+            using var fileResponse = await _httpClient.SendAsync(fileRequest);
+
+            if (!fileResponse.IsSuccessStatusCode)
+            {
+                return -1;
+            }
+
+            var fileBody = await fileResponse.Content.ReadAsStringAsync();
+            using var fileDoc = JsonDocument.Parse(fileBody);
+
+            foreach (var file in fileDoc.RootElement.EnumerateArray())
+            {
+                if (file.TryGetProperty("id", out var idProp) && idProp.GetInt32() == episodeFileId &&
+                    file.TryGetProperty("episodeIds", out var episodeIds))
                 {
                     return episodeIds.GetArrayLength();
                 }
             }
 
-            return -1;
+            return -1; // matching file not found in the episodefile response
         }
         catch (Exception)
         {

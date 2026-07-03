@@ -313,6 +313,28 @@ public class DeleteOrchestratorExecuteTests
     }
 
     [Fact]
+    public async Task Execute_EpisodeDelete_Blocks_WhenCoverageCheckFails()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "S01E01", Granularity = DeleteGranularity.Episode,
+            TvdbId = "371572", SeasonNumber = 1, EpisodeNumber = 1, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        arr.Setup(a => a.GetEpisodeFileCoverageCountAsync(7, 1, 1)).ReturnsAsync(-1);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Episode });
+
+        Assert.False(outcome.ArrDeleted);
+        Assert.Contains("verify", outcome.BlockedReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Execute_EpisodeDelete_Proceeds_WhenTrackedAndFileCoversOnlyOneEpisode()
     {
         var itemId = Guid.NewGuid();
