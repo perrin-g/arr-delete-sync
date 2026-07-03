@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.ArrDeleteSync.Models;
 
@@ -44,7 +45,6 @@ public class CircuitBreaker : ICircuitBreaker
         lock (_lock)
         {
             _state.ConsecutiveFailures = 0;
-            _state.RecentFailureTimestampsUtc.Clear();
         }
     }
 
@@ -73,7 +73,12 @@ public class CircuitBreaker : ICircuitBreaker
     {
         lock (_lock)
         {
-            _state = state;
+            _state = new CircuitBreakerState
+            {
+                IsTripped = state.IsTripped,
+                ConsecutiveFailures = state.ConsecutiveFailures,
+                RecentFailureTimestampsUtc = state.RecentFailureTimestampsUtc?.ToList() ?? new List<DateTime>()
+            };
         }
     }
 }
