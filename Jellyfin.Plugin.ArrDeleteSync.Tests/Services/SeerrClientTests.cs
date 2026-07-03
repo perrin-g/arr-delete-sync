@@ -122,4 +122,24 @@ public class SeerrClientTests
         Assert.Equal(HttpMethod.Delete, handler.LastRequest!.Method);
         Assert.Contains("/api/v1/media/11", handler.LastRequest.RequestUri!.ToString());
     }
+
+    [Fact]
+    public async Task ApiKey_IsSentAsHeader_NeverAsQueryString()
+    {
+        // Parity with ArrClientTests' equivalent — this constraint applies to every HTTP call
+        // this client makes, checked here via FindByTmdbIdAsync as a representative example.
+        HttpRequestMessage? captured = null;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            captured = req;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"mediaInfo\":null}") };
+        });
+        var client = new SeerrClient(new HttpClient(handler), "http://seerr:5055", "supersecretkey");
+
+        await client.FindByTmdbIdAsync(1, isTv: false);
+
+        Assert.NotNull(captured);
+        Assert.DoesNotContain("supersecretkey", captured!.RequestUri!.ToString());
+        Assert.True(captured.Headers.Contains("X-Api-Key"));
+    }
 }

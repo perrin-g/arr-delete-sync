@@ -97,9 +97,14 @@ public class SeerrClient : ISeerrClient
                     }
                 }
 
+                // Deliberately Indeterminate, not Tracked: a title+year match is only a candidate until
+                // VerifyTvdbIdAsync confirms it — reusing the existing "don't trust this yet" state (rather
+                // than a plain title/year match claiming to be a confirmed hit) means any future caller that
+                // naively checks State == Tracked fails safe by construction, instead of relying on every
+                // caller remembering to verify first.
                 return new SeerrLookupResult
                 {
-                    State = ArrTrackingState.Tracked,
+                    State = ArrTrackingState.Indeterminate,
                     TmdbId = result.GetProperty("id").GetInt32()
                 };
             }
