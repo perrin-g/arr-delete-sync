@@ -88,7 +88,7 @@ public class RetryQueueStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task InterruptedWrite_PreservesPreviousValidContent()
+    public async Task StaleTempFile_DoesNotLeakIntoReads()
     {
         var store = new RetryQueueStore(_tempDir);
         var entry = MakeEntry();
@@ -103,6 +103,19 @@ public class RetryQueueStoreTests : IDisposable
 
         Assert.Single(all);
         Assert.Equal(entry.Id, all[0].Id);
+    }
+
+    [Fact]
+    public async Task Upsert_CleansUpTempFileAfterSuccessfulWrite()
+    {
+        var store = new RetryQueueStore(_tempDir);
+        await store.UpsertAsync(MakeEntry());
+
+        var expectedFilePath = Path.Combine(_tempDir, "retry-queue.json");
+        var expectedTempPath = expectedFilePath + ".tmp";
+
+        Assert.True(File.Exists(expectedFilePath), "the real file should exist after a successful write");
+        Assert.False(File.Exists(expectedTempPath), "the temp file should not survive a successful rename");
     }
 
     [Fact]

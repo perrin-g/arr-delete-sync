@@ -94,6 +94,8 @@ public class RetryQueueStore : IRetryQueueStore
         return JsonSerializer.Deserialize<List<RetryQueueEntry>>(json) ?? new List<RetryQueueEntry>();
     }
 
+    // True crash-mid-write atomicity here relies on File.Move being an OS-level atomic rename on the
+    // target deployment platform (Linux); this is not re-verified by process-kill-style testing in this suite.
     private void WriteAllUnlocked(List<RetryQueueEntry> entries)
     {
         var json = JsonSerializer.Serialize(entries);
