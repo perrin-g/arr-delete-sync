@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Jellyfin.Plugin.ArrDeleteSync.Services;
@@ -12,7 +13,7 @@ public static class SecretScrubber
         }
 
         var result = text;
-        foreach (var secret in secrets)
+        foreach (var secret in secrets ?? Array.Empty<string>())
         {
             if (!string.IsNullOrEmpty(secret))
             {

@@ -34,4 +34,12 @@ public class SecretScrubberTests
         Assert.Equal(string.Empty, SecretScrubber.Scrub(string.Empty, new[] { "x" }));
         Assert.Null(SecretScrubber.Scrub(null, new[] { "x" }));
     }
+
+    [Fact]
+    public void Scrub_HandlesNullSecretsList_WithoutThrowing()
+    {
+        var result = SecretScrubber.Scrub("some text with no secrets to redact", null!);
+
+        Assert.Equal("some text with no secrets to redact", result);
+    }
 }

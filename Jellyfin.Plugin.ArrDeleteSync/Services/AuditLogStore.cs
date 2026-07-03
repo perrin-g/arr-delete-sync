@@ -18,6 +18,9 @@ public class AuditLogStore : IAuditLogStore
         _filePath = Path.Combine(dataDirectory, "audit-log.json");
     }
 
+    // Same crash-mid-write caveat as RetryQueueStore.WriteAllUnlocked: atomicity relies on
+    // File.Move being an OS-level atomic rename on the target deployment platform (Linux),
+    // not re-verified here via process-kill testing.
     public async Task AppendAsync(AuditLogEntry entry)
     {
         await _lock.WaitAsync();

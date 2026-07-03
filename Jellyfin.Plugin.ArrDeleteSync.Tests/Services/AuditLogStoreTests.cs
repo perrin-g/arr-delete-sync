@@ -67,4 +67,37 @@ public class AuditLogStoreTests : IDisposable
         var all = await store.GetAllAsync();
         Assert.Equal(15, all.Count);
     }
+
+    [Fact]
+    public async Task StaleTempFile_DoesNotLeakIntoReads()
+    {
+        // Same caveat as RetryQueueStoreTests' equivalent: this proves reads ignore a leftover
+        // .tmp file, not crash-mid-write atomicity by itself (ReadAllUnlocked never reads the
+        // .tmp path). See Append_CleansUpTempFileAfterSuccessfulWrite for the test that
+        // actually exercises the temp-file+rename mechanic.
+        var store = new AuditLogStore(_tempDir);
+        var entry = MakeEntry();
+        await store.AppendAsync(entry);
+
+        var strayTemp = Path.Combine(_tempDir, "audit-log.json.tmp");
+        await File.WriteAllTextAsync(strayTemp, "{not valid json");
+
+        var all = await store.GetAllAsync();
+
+        Assert.Single(all);
+        Assert.Equal(entry.Id, all[0].Id);
+    }
+
+    [Fact]
+    public async Task Append_CleansUpTempFileAfterSuccessfulWrite()
+    {
+        var store = new AuditLogStore(_tempDir);
+        await store.AppendAsync(MakeEntry());
+
+        var expectedFilePath = Path.Combine(_tempDir, "audit-log.json");
+        var expectedTempPath = expectedFilePath + ".tmp";
+
+        Assert.True(File.Exists(expectedFilePath), "the real file should exist after a successful write");
+        Assert.False(File.Exists(expectedTempPath), "the temp file should not survive a successful rename");
+    }
 }
