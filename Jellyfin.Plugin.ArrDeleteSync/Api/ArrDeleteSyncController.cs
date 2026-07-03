@@ -1,0 +1,121 @@
+// NOTE: verified via reflection probe against the installed Jellyfin.Common 10.11.11 package —
+// MediaBrowser.Common.Api.Policies.RequiresElevation == "RequiresElevation". This is the standard
+// policy name used by Jellyfin's own admin-only dashboard endpoints as of 10.11.
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.ArrDeleteSync.Models;
+using Jellyfin.Plugin.ArrDeleteSync.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Jellyfin.Plugin.ArrDeleteSync.Api;
+
+[ApiController]
+[Route("ArrDeleteSync")]
+[Authorize(Policy = "RequiresElevation")]
+public class ArrDeleteSyncController : ControllerBase
+{
+    private readonly IDeleteOrchestrator _orchestrator;
+    private readonly IRetryQueueStore _retryQueueStore;
+    private readonly IAuditLogStore _auditLogStore;
+    private readonly ICircuitBreaker _circuitBreaker;
+
+    public ArrDeleteSyncController(
+        IDeleteOrchestrator orchestrator,
+        IRetryQueueStore retryQueueStore,
+        IAuditLogStore auditLogStore,
+        ICircuitBreaker circuitBreaker)
+    {
+        _orchestrator = orchestrator;
+        _retryQueueStore = retryQueueStore;
+        _auditLogStore = auditLogStore;
+        _circuitBreaker = circuitBreaker;
+    }
+
+    [HttpGet("resolve")]
+    public async Task<ActionResult<ResolutionResult>> Resolve([FromQuery] Guid itemId, [FromQuery] DeleteGranularity granularity)
+    {
+        var result = await _orchestrator.ResolveAsync(itemId, granularity);
+        return Ok(result);
+    }
+
+    [HttpPost("delete")]
+    public async Task<ActionResult> Delete([FromBody] DeleteRequest request)
+    {
+        var outcome = await _orchestrator.ExecuteDeleteAsync(request);
+        return Ok(outcome);
+    }
+
+    [HttpGet("retry-queue")]
+    public async Task<ActionResult> GetRetryQueue()
+    {
+        var entries = await _retryQueueStore.GetAllAsync();
+        return Ok(entries);
+    }
+
+    [HttpPost("retry-queue/{id}/retry")]
+    public async Task<ActionResult> RetryEntry(Guid id)
+    {
+        var entry = (await _retryQueueStore.GetAllAsync()).FirstOrDefault(e => e.Id == id);
+        if (entry == null)
+        {
+            return NotFound();
+        }
+
+        var resolved = await _orchestrator.ProcessRetryEntryAsync(entry);
+        if (resolved)
+        {
+            await _retryQueueStore.RemoveAsync(id);
+        }
+        else
+        {
+            await _retryQueueStore.UpsertAsync(entry);
+        }
+
+        return Ok(new { resolved });
+    }
+
+    [HttpPost("retry-queue/{id}/dismiss")]
+    public async Task<ActionResult> DismissEntry(Guid id)
+    {
+        var entry = (await _retryQueueStore.GetAllAsync()).FirstOrDefault(e => e.Id == id);
+        if (entry == null)
+        {
+            return NotFound();
+        }
+
+        await _retryQueueStore.RemoveAsync(id);
+        await _auditLogStore.AppendAsync(new AuditLogEntry
+        {
+            Id = Guid.NewGuid(),
+            TimestampUtc = DateTime.UtcNow,
+            JellyfinItemId = entry.JellyfinItemId,
+            ItemDisplayName = "(dismissed retry entry)",
+            Granularity = entry.Granularity,
+            Action = "Dismissed",
+            Outcome = "Partial",
+            ErrorDetail = entry.ArrDeleteStatus != DeleteStepStatus.Succeeded
+                ? "Dismissed before arr deletion completed — the file was never removed; safe to leave as-is."
+                : (entry.JellyfinCleanupStatus != DeleteStepStatus.Succeeded || entry.SeerrUpdateStatus != DeleteStepStatus.Succeeded
+                    ? "Dismissed with Jellyfin catalog/Seerr sync still incomplete after arr already deleted the file."
+                    : null)
+        });
+
+        return Ok();
+    }
+
+    [HttpGet("audit-log")]
+    public async Task<ActionResult> GetAuditLog()
+    {
+        var entries = await _auditLogStore.GetAllAsync();
+        return Ok(entries);
+    }
+
+    [HttpPost("circuit-breaker/reset")]
+    public Task<ActionResult> ResetCircuitBreaker()
+    {
+        _circuitBreaker.Reset();
+        return Task.FromResult<ActionResult>(Ok());
+    }
+}
