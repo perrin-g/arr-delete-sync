@@ -247,6 +247,86 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = true, SeerrUpdated = seerrUpdated, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath };
     }
 
+    // Ordering (arr → Jellyfin cleanup → Seerr) is preserved on retry, not just on first attempt:
+    // each step only runs once the step before it is confirmed succeeded, exactly like
+    // ExecuteDeleteAsync itself.
+    public async Task<bool> ProcessRetryEntryAsync(RetryQueueEntry entry)
+    {
+        if (entry.ArrDeleteStatus == DeleteStepStatus.Pending)
+        {
+            // Nothing was attempted at all (this entry came from an indeterminate result before
+            // confirmation completed) — the Jellyfin item is untouched, safe to re-run everything.
+            var outcome = await ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = entry.JellyfinItemId, Granularity = entry.Granularity });
+            // ArrDeleted is correctly false for untracked/force-delete content (Task 8's
+            // RequiresManualFileCleanup flag identifies this) — the arr step was never applicable
+            // there, not a failure, so it shouldn't gate whether this retry counts as resolved.
+            var arrStepOk = outcome.ArrDeleted || outcome.RequiresManualFileCleanup;
+            return arrStepOk && outcome.JellyfinCleanedUp && outcome.SeerrUpdated;
+        }
+
+        var isSeries = entry.Granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
+
+        var arrOk = entry.ArrDeleteStatus == DeleteStepStatus.Succeeded;
+        if (!arrOk)
+        {
+            if (!string.IsNullOrEmpty(entry.ProviderIdType) && !string.IsNullOrEmpty(entry.ProviderIdValue))
+            {
+                // arr's delete call failed previously — re-resolve using the snapshotted provider
+                // ID (never the Jellyfin item; this plugin never touches it until arr succeeds).
+                var lookup = await _arrClient.FindByProviderIdAsync(entry.ProviderIdType, entry.ProviderIdValue, isSeries);
+                if (lookup.State == ArrTrackingState.ConfirmedNotTracked)
+                {
+                    arrOk = true; // already gone — counts as success
+                }
+                else if (lookup.State == ArrTrackingState.Tracked && lookup.InternalId.HasValue)
+                {
+                    arrOk = await _arrClient.DeleteAsync(lookup.InternalId.Value, isSeries);
+                }
+            }
+            else
+            {
+                // No provider ID at all — an untracked/force-delete entry; arr never had
+                // anything to do here, so this step is vacuously fine.
+                arrOk = true;
+            }
+        }
+
+        var jellyfinOk = entry.JellyfinCleanupStatus == DeleteStepStatus.Succeeded;
+        if (arrOk && !jellyfinOk)
+        {
+            jellyfinOk = _itemAccessor.DeleteItem(entry.JellyfinItemId, out _, out _);
+        }
+
+        var seerrOk = entry.SeerrUpdateStatus == DeleteStepStatus.Succeeded;
+        if (arrOk && jellyfinOk && !seerrOk)
+        {
+            if (entry.ProviderIdType == "tmdbId" && int.TryParse(entry.ProviderIdValue, out var tmdbInt))
+            {
+                var seerrLookup = await _seerrClient.FindByTmdbIdAsync(tmdbInt, isSeries);
+                if (seerrLookup.State == ArrTrackingState.ConfirmedNotTracked)
+                {
+                    seerrOk = true;
+                }
+                else if (seerrLookup.State == ArrTrackingState.Tracked && seerrLookup.MediaId.HasValue)
+                {
+                    seerrOk = await _seerrClient.UpdateAvailabilityAsync(seerrLookup.MediaId.Value);
+                }
+            }
+            else
+            {
+                // TVDB-only fallback case (already best-effort skip-logged) or no Seerr record
+                // at all — nothing further to retry.
+                seerrOk = true;
+            }
+        }
+
+        entry.ArrDeleteStatus = arrOk ? DeleteStepStatus.Succeeded : DeleteStepStatus.Failed;
+        entry.JellyfinCleanupStatus = jellyfinOk ? DeleteStepStatus.Succeeded : DeleteStepStatus.Failed;
+        entry.SeerrUpdateStatus = seerrOk ? DeleteStepStatus.Succeeded : DeleteStepStatus.Failed;
+
+        return arrOk && jellyfinOk && seerrOk;
+    }
+
     private async Task LogAsync(Guid itemId, string itemName, DeleteGranularity granularity, string action, string outcome, string? error, bool requiresManualFileCleanup, string? filePath)
     {
         await _auditLogStore.AppendAsync(new AuditLogEntry

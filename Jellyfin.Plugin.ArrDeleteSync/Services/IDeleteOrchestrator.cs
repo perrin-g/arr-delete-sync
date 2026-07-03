@@ -8,4 +8,5 @@ public interface IDeleteOrchestrator
 {
     Task<ResolutionResult> ResolveAsync(Guid jellyfinItemId, DeleteGranularity granularity);
     Task<DeleteOutcome> ExecuteDeleteAsync(DeleteRequest request);
+    Task<bool> ProcessRetryEntryAsync(RetryQueueEntry entry);
 }
