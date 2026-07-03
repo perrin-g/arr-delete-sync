@@ -152,7 +152,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             if (resolution.ArrInternalId.HasValue && itemInfo?.SeasonNumber != null && itemInfo.EpisodeNumber != null)
             {
                 var coverageCount = await _arrClientFactory.GetClient(true).GetEpisodeFileCoverageCountAsync(resolution.ArrInternalId.Value, itemInfo.SeasonNumber.Value, itemInfo.EpisodeNumber.Value);
-                if (coverageCount < 0)
+                if (coverageCount <= 0)
                 {
                     await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Could not verify episode file layout", false, null);
                     return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Could not verify this episode's file layout (arr lookup failed) — blocking conservatively. Try again or verify manually before force-deleting." };
@@ -216,7 +216,15 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             }
         }
 
-        _circuitBreaker.RecordSuccess();
+        // Only record a breaker success when an arr call was actually made (same gating
+        // condition as the arr-delete block above) — untracked/force-deleted content never calls
+        // arr at all, so recording a "success" for it would spuriously reset the
+        // consecutive-failure counter and could mask a genuinely broken arr/Seerr integration
+        // during a batch of force-deletes.
+        if (!isUntracked && resolution.State == ArrTrackingState.Tracked && resolution.ArrInternalId.HasValue)
+        {
+            _circuitBreaker.RecordSuccess();
+        }
 
         // Jellyfin catalog cleanup — metadata-only (DeleteFileLocation=false inside the accessor),
         // runs for both tracked (after arr already removed the file) and untracked content.

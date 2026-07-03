@@ -20,10 +20,12 @@ public class ServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<IJellyfinItemAccessor, JellyfinItemAccessor>();
-        serviceCollection.AddSingleton<ICircuitBreaker>(_ =>
+        serviceCollection.AddSingleton<ICircuitBreaker>(provider =>
         {
             var config = Plugin.Instance!.Configuration;
-            return new CircuitBreaker(config.CircuitBreakerThreshold, config.CircuitBreakerWindowMinutes);
+            var inner = new CircuitBreaker(config.CircuitBreakerThreshold, config.CircuitBreakerWindowMinutes);
+            var paths = provider.GetRequiredService<IApplicationPaths>();
+            return new PersistentCircuitBreaker(inner, Path.Combine(paths.DataPath, "arrdeletesync"));
         });
         serviceCollection.AddSingleton<IRetryQueueStore>(provider =>
         {

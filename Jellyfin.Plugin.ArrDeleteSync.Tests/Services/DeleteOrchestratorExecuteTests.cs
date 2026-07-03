@@ -245,6 +245,11 @@ public class DeleteOrchestratorExecuteTests
         Assert.True(outcome.JellyfinCleanedUp);
         Assert.True(outcome.RequiresManualFileCleanup);
         arr.Verify(a => a.FindByProviderIdAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Never);
+        // Force-deleted untracked content never calls arr, so it must never record a spurious
+        // breaker "success" either — doing so would mask a genuinely broken arr/Seerr integration
+        // during a batch of force-deletes (see the arr-delete-first ordering test for the
+        // gate this shares).
+        breaker.Verify(b => b.RecordSuccess(), Times.Never);
     }
 
     [Fact]
@@ -325,6 +330,28 @@ public class DeleteOrchestratorExecuteTests
         arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
             .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
         arr.Setup(a => a.GetEpisodeFileCoverageCountAsync(7, 1, 1)).ReturnsAsync(-1);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Episode });
+
+        Assert.False(outcome.ArrDeleted);
+        Assert.Contains("verify", outcome.BlockedReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Execute_EpisodeDelete_Blocks_WhenCoverageCountIsZero()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "S01E01", Granularity = DeleteGranularity.Episode,
+            TvdbId = "371572", SeasonNumber = 1, EpisodeNumber = 1, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        arr.Setup(a => a.GetEpisodeFileCoverageCountAsync(7, 1, 1)).ReturnsAsync(0);
 
         var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 

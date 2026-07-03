@@ -47,4 +47,49 @@ public class ApiKeyProtectorTests
             Directory.Delete(keyRingDir, recursive: true);
         }
     }
+
+    // PluginConfiguration's *ApiKeyEncrypted fields default to string.Empty, and Unprotect is
+    // called eagerly for every configured service at singleton construction time — an
+    // unconfigured (empty) key must never throw and crash the whole DI graph.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void Unprotect_ReturnsEmptyString_ForNullOrEmptyInput(string? encrypted)
+    {
+        var keyRingDir = Path.Combine(Path.GetTempPath(), "arrdeletesync-keyring-" + System.Guid.NewGuid());
+        Directory.CreateDirectory(keyRingDir);
+        try
+        {
+            var provider = DataProtectionProvider.Create(new DirectoryInfo(keyRingDir));
+            var protector = new ApiKeyProtector(provider);
+
+            var result = protector.Unprotect(encrypted!);
+
+            Assert.Equal(string.Empty, result);
+        }
+        finally
+        {
+            Directory.Delete(keyRingDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Unprotect_ReturnsEmptyString_WhenDecryptionFails()
+    {
+        var keyRingDir = Path.Combine(Path.GetTempPath(), "arrdeletesync-keyring-" + System.Guid.NewGuid());
+        Directory.CreateDirectory(keyRingDir);
+        try
+        {
+            var provider = DataProtectionProvider.Create(new DirectoryInfo(keyRingDir));
+            var protector = new ApiKeyProtector(provider);
+
+            var result = protector.Unprotect("not-a-real-encrypted-value");
+
+            Assert.Equal(string.Empty, result);
+        }
+        finally
+        {
+            Directory.Delete(keyRingDir, recursive: true);
+        }
+    }
 }

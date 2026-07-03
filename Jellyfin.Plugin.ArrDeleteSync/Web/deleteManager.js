@@ -55,6 +55,8 @@
       Limit: 25
     }).then(function (result) {
       renderLibraryResults((result && result.Items) || []);
+    }).catch(function (err) {
+      Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
     });
   }
 
@@ -103,6 +105,8 @@
 
       page.querySelector("#ConfirmDeleteButton").disabled = false;
       page.querySelector("#PreviewSection").style.display = "block";
+    }).catch(function (err) {
+      Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
     });
   }
 
@@ -137,13 +141,17 @@
 
       var message = outcome.blockedReason ||
         (outcome.queuedForRetry ? "Some steps queued for retry — see Retry Queue below." : "Deleted.");
-      if (outcome.requiresManualFileCleanup && outcome.filePath) {
-        message += " The file was NOT deleted (arr doesn't track it) — remove it manually at: " + outcome.filePath;
+      if (outcome.requiresManualFileCleanup) {
+        message += outcome.filePath
+          ? (" The file was NOT deleted (arr doesn't track it) — remove it manually at: " + outcome.filePath)
+          : " The file was NOT deleted (arr doesn't track it) — the exact path could not be determined; check the item's library folder manually.";
       }
       Dashboard.alert(message);
       page.querySelector("#PreviewSection").style.display = "none";
       refreshRetryQueue();
       refreshAuditLog();
+    }).catch(function (err) {
+      Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
     });
   }
 
@@ -157,7 +165,9 @@
         var retryBtn = document.createElement("button");
         retryBtn.textContent = "Retry now";
         retryBtn.onclick = function () {
-          fetchJson("retry-queue/" + entry.id + "/retry", { type: "POST" }).then(refreshRetryQueue);
+          fetchJson("retry-queue/" + entry.id + "/retry", { type: "POST" }).then(refreshRetryQueue).catch(function (err) {
+            Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+          });
         };
         var dismissBtn = document.createElement("button");
         dismissBtn.textContent = "Give up";
@@ -171,12 +181,16 @@
               return;
             }
           }
-          fetchJson("retry-queue/" + entry.id + "/dismiss", { type: "POST" }).then(refreshRetryQueue);
+          fetchJson("retry-queue/" + entry.id + "/dismiss", { type: "POST" }).then(refreshRetryQueue).catch(function (err) {
+            Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+          });
         };
         row.appendChild(retryBtn);
         row.appendChild(dismissBtn);
         list.appendChild(row);
       });
+    }).catch(function (err) {
+      Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
     });
   }
 
@@ -189,6 +203,8 @@
         row.textContent = entry.timestampUtc + " — " + entry.itemDisplayName + " — " + entry.action + " — " + entry.outcome;
         list.appendChild(row);
       });
+    }).catch(function (err) {
+      Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
     });
   }
 
