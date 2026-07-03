@@ -21,12 +21,22 @@ public class DeleteOrchestratorExecuteTests
     private static (Mock<IJellyfinItemAccessor>, Mock<IArrClient>, Mock<ISeerrClient>, Mock<IRetryQueueStore>, Mock<IAuditLogStore>, Mock<ICircuitBreaker>) MakeMocks()
         => (new(), new(), new(), new(), new(), new());
 
+    // These tests exercise execute/retry logic against "an arr client" and don't care about
+    // Radarr-vs-Sonarr routing, so the stub factory returns the same mocked client regardless of
+    // isSeries — see DeleteOrchestratorResolveTests for the dedicated routing test.
+    private static IArrClientFactory MakeArrClientFactory(IArrClient arrClient)
+    {
+        var factory = new Mock<IArrClientFactory>();
+        factory.Setup(f => f.GetClient(It.IsAny<bool>())).Returns(arrClient);
+        return factory.Object;
+    }
+
     [Fact]
     public async Task Execute_Rejects_WhenCircuitBreakerTripped()
     {
         var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
         breaker.Setup(b => b.IsTripped).Returns(true);
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie });
 
@@ -60,7 +70,7 @@ public class DeleteOrchestratorExecuteTests
             .Returns(true);
         seerr.Setup(s => s.UpdateAvailabilityAsync(5)).Callback(() => callOrder.Add("seerr")).ReturnsAsync(true);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
 
@@ -84,7 +94,7 @@ public class DeleteOrchestratorExecuteTests
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 5 });
         arr.Setup(a => a.DeleteAsync(41, false)).ReturnsAsync(false);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
 
@@ -112,7 +122,7 @@ public class DeleteOrchestratorExecuteTests
             .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = true; err = "denied"; }))
             .Returns(false);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
 
@@ -141,7 +151,7 @@ public class DeleteOrchestratorExecuteTests
             .Returns(true);
         seerr.Setup(s => s.UpdateAvailabilityAsync(5)).ReturnsAsync(false);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
 
@@ -165,7 +175,7 @@ public class DeleteOrchestratorExecuteTests
         arr.Setup(a => a.FindByProviderIdAsync("tmdbId", "603", false))
             .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Indeterminate });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
 
@@ -191,7 +201,7 @@ public class DeleteOrchestratorExecuteTests
             .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
             .Returns(true);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
 
@@ -209,7 +219,7 @@ public class DeleteOrchestratorExecuteTests
         var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
         accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo { Id = itemId, Name = "Unidentified", Granularity = DeleteGranularity.Movie });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie, Force = false });
 
@@ -228,7 +238,7 @@ public class DeleteOrchestratorExecuteTests
             .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
             .Returns(true);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie, Force = true });
 

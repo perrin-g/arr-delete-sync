@@ -12,6 +12,16 @@ public class DeleteOrchestratorRetryTests
     private static (Mock<IJellyfinItemAccessor>, Mock<IArrClient>, Mock<ISeerrClient>, Mock<IRetryQueueStore>, Mock<IAuditLogStore>, Mock<ICircuitBreaker>) MakeMocks()
         => (new(), new(), new(), new(), new(), new());
 
+    // These tests exercise retry logic against "an arr client" and don't care about
+    // Radarr-vs-Sonarr routing, so the stub factory returns the same mocked client regardless of
+    // isSeries — see DeleteOrchestratorResolveTests for the dedicated routing test.
+    private static IArrClientFactory MakeArrClientFactory(IArrClient arrClient)
+    {
+        var factory = new Mock<IArrClientFactory>();
+        factory.Setup(f => f.GetClient(It.IsAny<bool>())).Returns(arrClient);
+        return factory.Object;
+    }
+
     [Fact]
     public async Task ProcessRetry_ArrNeverAttempted_ReRunsFullExecute_UsingStillExistingItem()
     {
@@ -25,7 +35,7 @@ public class DeleteOrchestratorRetryTests
             .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
             .Returns(true);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
         var entry = new RetryQueueEntry { Id = Guid.NewGuid(), JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie, ArrDeleteStatus = DeleteStepStatus.Pending, NextRetryAtUtc = DateTime.UtcNow };
 
         var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
@@ -43,7 +53,7 @@ public class DeleteOrchestratorRetryTests
             .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
             .Returns(true);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
         var entry = new RetryQueueEntry
         {
             Id = Guid.NewGuid(), JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie,
@@ -68,7 +78,7 @@ public class DeleteOrchestratorRetryTests
             .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
             .Returns(true);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
         var entry = new RetryQueueEntry
         {
             Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie,
@@ -90,7 +100,7 @@ public class DeleteOrchestratorRetryTests
         arr.Setup(a => a.FindByProviderIdAsync("tmdbId", "603", false)).ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 41 });
         arr.Setup(a => a.DeleteAsync(41, false)).ReturnsAsync(false);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
         var entry = new RetryQueueEntry
         {
             Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie,
@@ -133,7 +143,7 @@ public class DeleteOrchestratorRetryTests
             NextRetryAtUtc = DateTime.UtcNow
         });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
         var entry = new RetryQueueEntry { Id = Guid.NewGuid(), JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie, ArrDeleteStatus = DeleteStepStatus.Pending, NextRetryAtUtc = DateTime.UtcNow };
 
         var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
@@ -155,7 +165,7 @@ public class DeleteOrchestratorRetryTests
         arr.Setup(a => a.FindByProviderIdAsync("tmdbId", "603", false)).ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 41 });
         arr.Setup(a => a.DeleteAsync(41, false)).ReturnsAsync(false);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arr.Object, seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
         var entry = new RetryQueueEntry
         {
             Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie,

@@ -7,7 +7,7 @@ namespace Jellyfin.Plugin.ArrDeleteSync.Services;
 public partial class DeleteOrchestrator : IDeleteOrchestrator
 {
     private readonly IJellyfinItemAccessor _itemAccessor;
-    private readonly IArrClient _arrClient;
+    private readonly IArrClientFactory _arrClientFactory;
     private readonly ISeerrClient _seerrClient;
     private readonly IRetryQueueStore _retryQueueStore;
     private readonly IAuditLogStore _auditLogStore;
@@ -15,14 +15,14 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
 
     public DeleteOrchestrator(
         IJellyfinItemAccessor itemAccessor,
-        IArrClient arrClient,
+        IArrClientFactory arrClientFactory,
         ISeerrClient seerrClient,
         IRetryQueueStore retryQueueStore,
         IAuditLogStore auditLogStore,
         ICircuitBreaker circuitBreaker)
     {
         _itemAccessor = itemAccessor;
-        _arrClient = arrClient;
+        _arrClientFactory = arrClientFactory;
         _seerrClient = seerrClient;
         _retryQueueStore = retryQueueStore;
         _auditLogStore = auditLogStore;
@@ -54,7 +54,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         var providerIdType = isSeries ? "tvdbId" : "tmdbId";
         var providerIdValue = isSeries ? tvdbId! : tmdbId!;
 
-        var arrResult = await _arrClient.FindByProviderIdAsync(providerIdType, providerIdValue, isSeries);
+        var arrResult = await _arrClientFactory.GetClient(isSeries).FindByProviderIdAsync(providerIdType, providerIdValue, isSeries);
 
         var result = new ResolutionResult
         {
@@ -81,7 +81,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
 
     private async Task<ResolutionResult> ResolveWithSeerrFallbackAsync(JellyfinItemInfo item, string tvdbId)
     {
-        var arrResult = await _arrClient.FindByProviderIdAsync("tvdbId", tvdbId, isSeries: true);
+        var arrResult = await _arrClientFactory.GetClient(true).FindByProviderIdAsync("tvdbId", tvdbId, isSeries: true);
 
         var result = new ResolutionResult
         {
@@ -164,7 +164,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         if (!isUntracked && resolution.State == ArrTrackingState.Tracked && resolution.ArrInternalId.HasValue)
         {
             var isSeries = request.Granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
-            arrDeleted = await _arrClient.DeleteAsync(resolution.ArrInternalId.Value, isSeries);
+            arrDeleted = await _arrClientFactory.GetClient(isSeries).DeleteAsync(resolution.ArrInternalId.Value, isSeries);
 
             if (!arrDeleted)
             {
@@ -305,14 +305,14 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             {
                 // arr's delete call failed previously — re-resolve using the snapshotted provider
                 // ID (never the Jellyfin item; this plugin never touches it until arr succeeds).
-                var lookup = await _arrClient.FindByProviderIdAsync(entry.ProviderIdType, entry.ProviderIdValue, isSeries);
+                var lookup = await _arrClientFactory.GetClient(isSeries).FindByProviderIdAsync(entry.ProviderIdType, entry.ProviderIdValue, isSeries);
                 if (lookup.State == ArrTrackingState.ConfirmedNotTracked)
                 {
                     arrOk = true; // already gone — counts as success
                 }
                 else if (lookup.State == ArrTrackingState.Tracked && lookup.InternalId.HasValue)
                 {
-                    arrOk = await _arrClient.DeleteAsync(lookup.InternalId.Value, isSeries);
+                    arrOk = await _arrClientFactory.GetClient(isSeries).DeleteAsync(lookup.InternalId.Value, isSeries);
                 }
             }
             else

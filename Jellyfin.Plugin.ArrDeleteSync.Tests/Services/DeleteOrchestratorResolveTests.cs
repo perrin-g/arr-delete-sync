@@ -18,6 +18,17 @@ public class DeleteOrchestratorResolveTests
         ImdbId = imdbId
     };
 
+    // Every existing test here only cares about resolve/execute logic against "an arr client",
+    // not about Radarr-vs-Sonarr routing — so this stub returns the same mocked client for both
+    // isSeries values, preserving prior behavior under DeleteOrchestrator's new constructor
+    // shape. The dedicated routing test below sets up two distinct clients instead.
+    private static IArrClientFactory MakeArrClientFactory(IArrClient arrClient)
+    {
+        var factory = new Mock<IArrClientFactory>();
+        factory.Setup(f => f.GetClient(It.IsAny<bool>())).Returns(arrClient);
+        return factory.Object;
+    }
+
     [Fact]
     public async Task Resolve_Movie_ReturnsTracked_WhenArrHasIt()
     {
@@ -33,7 +44,7 @@ public class DeleteOrchestratorResolveTests
         seerrClient.Setup(s => s.FindByTmdbIdAsync(603, false))
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 5 });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -58,7 +69,7 @@ public class DeleteOrchestratorResolveTests
         seerrClient.Setup(s => s.FindByTmdbIdAsync(603, false))
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.ConfirmedNotTracked });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -78,7 +89,7 @@ public class DeleteOrchestratorResolveTests
 
         var seerrClient = new Mock<ISeerrClient>();
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -93,7 +104,7 @@ public class DeleteOrchestratorResolveTests
         var accessor = new Mock<IJellyfinItemAccessor>();
         accessor.Setup(a => a.GetItem(itemId)).Returns(MakeMovie(itemId, tmdbId: null, imdbId: "tt0080455"));
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, new Mock<IArrClient>().Object, new Mock<ISeerrClient>().Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(new Mock<IArrClient>().Object), new Mock<ISeerrClient>().Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -125,7 +136,7 @@ public class DeleteOrchestratorResolveTests
         seerrClient.Setup(s => s.FindByTmdbIdAsync(94997, true))
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 20 });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Series);
 
@@ -156,10 +167,59 @@ public class DeleteOrchestratorResolveTests
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, TmdbId = 555 });
         seerrClient.Setup(s => s.VerifyTvdbIdAsync(555, 111)).ReturnsAsync(false);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Series);
 
         Assert.Null(result.SeerrMediaId);
+    }
+
+    [Fact]
+    public async Task Resolve_RoutesToCorrectArrClient_MovieUsesRadarrClient_SeriesUsesSonarrClient()
+    {
+        var movieId = Guid.NewGuid();
+        var seriesId = Guid.NewGuid();
+
+        var accessor = new Mock<IJellyfinItemAccessor>();
+        accessor.Setup(a => a.GetItem(movieId)).Returns(MakeMovie(movieId));
+        accessor.Setup(a => a.GetItem(seriesId)).Returns(new JellyfinItemInfo
+        {
+            Id = seriesId,
+            Name = "Test Series",
+            Granularity = DeleteGranularity.Series,
+            TvdbId = "371572"
+        });
+
+        // Two DISTINCT mocks — this is the crux of the test: if DeleteOrchestrator ever calls
+        // the wrong one (e.g. always the "Radarr" client, regardless of isSeries), the series
+        // resolve below would come back empty/wrong instead of hitting the Sonarr mock's setup.
+        var radarrClient = new Mock<IArrClient>();
+        radarrClient.Setup(a => a.FindByProviderIdAsync("tmdbId", "603", false))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 41, Title = "Test Movie" });
+
+        var sonarrClient = new Mock<IArrClient>();
+        sonarrClient.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7, Title = "Test Series" });
+
+        var arrClientFactory = new Mock<IArrClientFactory>();
+        arrClientFactory.Setup(f => f.GetClient(false)).Returns(radarrClient.Object);
+        arrClientFactory.Setup(f => f.GetClient(true)).Returns(sonarrClient.Object);
+
+        var seerrClient = new Mock<ISeerrClient>();
+        seerrClient.Setup(s => s.FindByTmdbIdAsync(603, false))
+            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.ConfirmedNotTracked });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClientFactory.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+
+        var movieResult = await orchestrator.ResolveAsync(movieId, DeleteGranularity.Movie);
+        var seriesResult = await orchestrator.ResolveAsync(seriesId, DeleteGranularity.Series);
+
+        Assert.Equal(41, movieResult.ArrInternalId);
+        Assert.Equal(7, seriesResult.ArrInternalId);
+
+        radarrClient.Verify(a => a.FindByProviderIdAsync("tmdbId", "603", false), Times.Once);
+        radarrClient.Verify(a => a.FindByProviderIdAsync(It.IsAny<string>(), It.IsAny<string>(), true), Times.Never);
+        sonarrClient.Verify(a => a.FindByProviderIdAsync("tvdbId", "371572", true), Times.Once);
+        sonarrClient.Verify(a => a.FindByProviderIdAsync(It.IsAny<string>(), It.IsAny<string>(), false), Times.Never);
     }
 }
