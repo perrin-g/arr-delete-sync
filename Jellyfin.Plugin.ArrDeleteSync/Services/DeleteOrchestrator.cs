@@ -135,6 +135,31 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "This item isn't identified (no usable provider ID). Use force-delete to remove it — arr won't be touched, and the file will remain on disk (see the untracked-content limitation)." };
         }
 
+        if (request.Granularity == DeleteGranularity.Season && itemInfo != null && !itemInfo.HasPhysicalPath)
+        {
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Virtual season, no physical layout", false, null);
+            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Season-level delete isn't available for this show's layout (no physical per-season folder)." };
+        }
+
+        if (request.Granularity == DeleteGranularity.Episode)
+        {
+            if (resolution.State != ArrTrackingState.Tracked)
+            {
+                await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Episode-level delete requires arr tracking to verify file boundary", false, null);
+                return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Episode-level delete requires arr tracking to verify file boundary; use series/season-level or force-delete for untracked content." };
+            }
+
+            if (resolution.ArrInternalId.HasValue && itemInfo?.SeasonNumber != null && itemInfo.EpisodeNumber != null)
+            {
+                var coverageCount = await _arrClientFactory.GetClient(true).GetEpisodeFileCoverageCountAsync(resolution.ArrInternalId.Value, itemInfo.SeasonNumber.Value, itemInfo.EpisodeNumber.Value);
+                if (coverageCount > 1)
+                {
+                    await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", $"File covers {coverageCount} episodes", false, null);
+                    return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = $"This file also contains {coverageCount - 1} other episode(s) — not supported at single-episode granularity." };
+                }
+            }
+        }
+
         var isUntracked = resolution.State == ArrTrackingState.ConfirmedNotTracked || (!resolution.HasUsableProviderId && request.Force);
 
         if (resolution.State == ArrTrackingState.Indeterminate)

@@ -77,4 +77,38 @@ public class ArrClient : IArrClient
             return false;
         }
     }
+
+    public async Task<int> GetEpisodeFileCoverageCountAsync(int seriesInternalId, int seasonNumber, int episodeNumber)
+    {
+        var url = $"{_baseUrl}/api/v3/episodefile?seriesId={seriesInternalId}";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("X-Api-Key", _apiKey);
+            using var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return -1; // caller treats negative as indeterminate and blocks conservatively
+            }
+
+            var body = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+
+            foreach (var file in doc.RootElement.EnumerateArray())
+            {
+                if (file.TryGetProperty("episodeIds", out var episodeIds))
+                {
+                    return episodeIds.GetArrayLength();
+                }
+            }
+
+            return -1;
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
+    }
 }

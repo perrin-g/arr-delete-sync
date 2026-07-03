@@ -110,4 +110,32 @@ public class ArrClientTests
         Assert.Equal(HttpMethod.Delete, handler.LastRequest!.Method);
         Assert.Contains("deleteFiles=true", handler.LastRequest.RequestUri!.ToString());
     }
+
+    [Fact]
+    public async Task GetEpisodeFileCoverageCount_ReturnsOne_ForNormalSingleEpisodeFile()
+    {
+        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[{\"id\":100,\"episodeIds\":[500]}]")
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task GetEpisodeFileCoverageCount_ReturnsTwo_ForCombinedMultiEpisodeFile()
+    {
+        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[{\"id\":100,\"episodeIds\":[500,501]}]")
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.Equal(2, count);
+    }
 }
