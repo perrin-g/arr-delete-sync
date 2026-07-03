@@ -256,12 +256,44 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         {
             // Nothing was attempted at all (this entry came from an indeterminate result before
             // confirmation completed) — the Jellyfin item is untouched, safe to re-run everything.
+            // ExecuteDeleteAsync records its own circuit-breaker outcomes internally, so this
+            // branch doesn't need to (unlike the general branch below, which calls arr/Jellyfin/
+            // Seerr directly and must record for itself — see the end of this method).
             var outcome = await ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = entry.JellyfinItemId, Granularity = entry.Granularity });
             // ArrDeleted is correctly false for untracked/force-delete content (Task 8's
             // RequiresManualFileCleanup flag identifies this) — the arr step was never applicable
             // there, not a failure, so it shouldn't gate whether this retry counts as resolved.
             var arrStepOk = outcome.ArrDeleted || outcome.RequiresManualFileCleanup;
-            return arrStepOk && outcome.JellyfinCleanedUp && outcome.SeerrUpdated;
+            var resolved = arrStepOk && outcome.JellyfinCleanedUp && outcome.SeerrUpdated;
+
+            if (!resolved)
+            {
+                // ExecuteDeleteAsync already wrote its OWN fresh, granular RetryQueueEntry (new Id,
+                // accurate per-step status) if anything failed — RetryQueueStore dedupes by
+                // JellyfinItemId, so that write already landed correctly. But the caller
+                // (RetryQueueTask) still holds this ORIGINAL entry object, still showing every
+                // step as "Pending", and will re-upsert IT with a bumped attempt count on our
+                // return — which would clobber the more accurate entry ExecuteDeleteAsync just
+                // wrote. Pull the fresh state back onto this entry object so that re-upsert
+                // preserves it instead of regressing it back to "everything Pending" (which would
+                // otherwise cause every subsequent retry to redo the whole flow from scratch, and
+                // — worse — cause an already-correctly-deleted item to be misclassified as
+                // "untracked, needs manual cleanup" on the next full re-resolve).
+                var freshEntry = await _retryQueueStore.FindByItemIdAsync(entry.JellyfinItemId);
+                if (freshEntry != null)
+                {
+                    entry.ArrDeleteStatus = freshEntry.ArrDeleteStatus;
+                    entry.JellyfinCleanupStatus = freshEntry.JellyfinCleanupStatus;
+                    entry.SeerrUpdateStatus = freshEntry.SeerrUpdateStatus;
+                    entry.ProviderIdType = freshEntry.ProviderIdType;
+                    entry.ProviderIdValue = freshEntry.ProviderIdValue;
+                    entry.IsStructuralFailure = freshEntry.IsStructuralFailure;
+                    entry.RequiresManualFileCleanup = freshEntry.RequiresManualFileCleanup;
+                    entry.FilePath = freshEntry.FilePath;
+                }
+            }
+
+            return resolved;
         }
 
         var isSeries = entry.Granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
@@ -324,7 +356,22 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         entry.JellyfinCleanupStatus = jellyfinOk ? DeleteStepStatus.Succeeded : DeleteStepStatus.Failed;
         entry.SeerrUpdateStatus = seerrOk ? DeleteStepStatus.Succeeded : DeleteStepStatus.Failed;
 
-        return arrOk && jellyfinOk && seerrOk;
+        var fullyResolved = arrOk && jellyfinOk && seerrOk;
+
+        // This branch calls arr/Jellyfin/Seerr directly (unlike the Pending branch, which
+        // delegates to ExecuteDeleteAsync and gets breaker recording for free) — without this,
+        // a dependency that only ever fails during retries (never during a first attempt) could
+        // never trip the breaker at all.
+        if (fullyResolved)
+        {
+            _circuitBreaker.RecordSuccess();
+        }
+        else
+        {
+            _circuitBreaker.RecordFailure();
+        }
+
+        return fullyResolved;
     }
 
     private async Task LogAsync(Guid itemId, string itemName, DeleteGranularity granularity, string action, string outcome, string? error, bool requiresManualFileCleanup, string? filePath)
