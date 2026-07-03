@@ -9,12 +9,24 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
     private readonly IJellyfinItemAccessor _itemAccessor;
     private readonly IArrClient _arrClient;
     private readonly ISeerrClient _seerrClient;
+    private readonly IRetryQueueStore _retryQueueStore;
+    private readonly IAuditLogStore _auditLogStore;
+    private readonly ICircuitBreaker _circuitBreaker;
 
-    public DeleteOrchestrator(IJellyfinItemAccessor itemAccessor, IArrClient arrClient, ISeerrClient seerrClient)
+    public DeleteOrchestrator(
+        IJellyfinItemAccessor itemAccessor,
+        IArrClient arrClient,
+        ISeerrClient seerrClient,
+        IRetryQueueStore retryQueueStore,
+        IAuditLogStore auditLogStore,
+        ICircuitBreaker circuitBreaker)
     {
         _itemAccessor = itemAccessor;
         _arrClient = arrClient;
         _seerrClient = seerrClient;
+        _retryQueueStore = retryQueueStore;
+        _auditLogStore = auditLogStore;
+        _circuitBreaker = circuitBreaker;
     }
 
     public async Task<ResolutionResult> ResolveAsync(Guid jellyfinItemId, DeleteGranularity granularity)
@@ -105,11 +117,159 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         return result;
     }
 
-    // Intentionally not implemented in Task 7 — Task 8 extends this partial class with the
-    // real ExecuteDeleteAsync logic. This stub exists only so DeleteOrchestrator (a concrete
-    // class instantiated directly in tests) satisfies IDeleteOrchestrator's full contract.
-    public Task<DeleteOutcome> ExecuteDeleteAsync(DeleteRequest request)
+    public async Task<DeleteOutcome> ExecuteDeleteAsync(DeleteRequest request)
     {
-        throw new NotImplementedException("ExecuteDeleteAsync is implemented in Task 8.");
+        if (_circuitBreaker.IsTripped)
+        {
+            await LogAsync(request.JellyfinItemId, "unknown", request.Granularity, "Blocked", "Failed", "Circuit breaker is tripped", false, null);
+            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Circuit breaker is tripped — repeated failures detected. An admin must manually reset it." };
+        }
+
+        var resolution = await ResolveAsync(request.JellyfinItemId, request.Granularity);
+        var itemInfo = _itemAccessor.GetItem(request.JellyfinItemId);
+        var itemName = itemInfo?.Name ?? "(deleted)";
+
+        if (!resolution.HasUsableProviderId && !request.Force)
+        {
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "No usable provider ID; force flag required", false, null);
+            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "This item isn't identified (no usable provider ID). Use force-delete to remove it — arr won't be touched, and the file will remain on disk (see the untracked-content limitation)." };
+        }
+
+        var isUntracked = resolution.State == ArrTrackingState.ConfirmedNotTracked || (!resolution.HasUsableProviderId && request.Force);
+
+        if (resolution.State == ArrTrackingState.Indeterminate)
+        {
+            var pendingEntry = new RetryQueueEntry
+            {
+                Id = Guid.NewGuid(),
+                JellyfinItemId = request.JellyfinItemId,
+                Granularity = request.Granularity,
+                ProviderIdType = resolution.ProviderIdType,
+                ProviderIdValue = resolution.ProviderIdValue,
+                ArrDeleteStatus = DeleteStepStatus.Pending,
+                JellyfinCleanupStatus = DeleteStepStatus.Pending,
+                SeerrUpdateStatus = DeleteStepStatus.Pending,
+                NextRetryAtUtc = DateTime.UtcNow.AddMinutes(5)
+            };
+            await _retryQueueStore.UpsertAsync(pendingEntry);
+            _circuitBreaker.RecordFailure();
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", "Could not verify arr status; queued for retry", false, null);
+            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = true };
+        }
+
+        // Tracked content: *arr owns the actual file + record deletion (deleteFiles=true) — the
+        // only component in this stack with write access to media. This must happen before any
+        // Jellyfin action, so a failure here leaves nothing else touched.
+        bool arrDeleted = false; // untracked content: nothing to delete via arr, so vacuously not "deleted by arr"
+        if (!isUntracked && resolution.State == ArrTrackingState.Tracked && resolution.ArrInternalId.HasValue)
+        {
+            var isSeries = request.Granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
+            arrDeleted = await _arrClient.DeleteAsync(resolution.ArrInternalId.Value, isSeries);
+
+            if (!arrDeleted)
+            {
+                var entry = new RetryQueueEntry
+                {
+                    Id = Guid.NewGuid(),
+                    JellyfinItemId = request.JellyfinItemId,
+                    Granularity = request.Granularity,
+                    ProviderIdType = resolution.ProviderIdType,
+                    ProviderIdValue = resolution.ProviderIdValue,
+                    ArrDeleteStatus = DeleteStepStatus.Failed,
+                    NextRetryAtUtc = DateTime.UtcNow.AddMinutes(5)
+                };
+                await _retryQueueStore.UpsertAsync(entry);
+                _circuitBreaker.RecordFailure();
+                await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", "arr delete call failed", false, null);
+                return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = true };
+            }
+        }
+
+        _circuitBreaker.RecordSuccess();
+
+        // Jellyfin catalog cleanup — metadata-only (DeleteFileLocation=false inside the accessor),
+        // runs for both tracked (after arr already removed the file) and untracked content.
+        var cleanedUp = _itemAccessor.DeleteItem(request.JellyfinItemId, out var isStructural, out var cleanupError);
+
+        var requiresManualFileCleanup = isUntracked;
+        var filePath = requiresManualFileCleanup ? itemInfo?.Path : null;
+
+        if (!cleanedUp)
+        {
+            var entry = new RetryQueueEntry
+            {
+                Id = Guid.NewGuid(),
+                JellyfinItemId = request.JellyfinItemId,
+                Granularity = request.Granularity,
+                ProviderIdType = resolution.ProviderIdType,
+                ProviderIdValue = resolution.ProviderIdValue,
+                ArrDeleteStatus = DeleteStepStatus.Succeeded,
+                JellyfinCleanupStatus = DeleteStepStatus.Failed,
+                IsStructuralFailure = isStructural,
+                LastError = SecretScrubber.Scrub(cleanupError, GetKnownSecrets()),
+                NextRetryAtUtc = isStructural ? DateTime.MaxValue : DateTime.UtcNow.AddMinutes(5),
+                RequiresManualFileCleanup = requiresManualFileCleanup,
+                FilePath = filePath
+            };
+            await _retryQueueStore.UpsertAsync(entry);
+            _circuitBreaker.RecordFailure();
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", isStructural ? "Failed" : "Partial", entry.LastError, requiresManualFileCleanup, filePath);
+            return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = !isStructural, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath };
+        }
+
+        bool seerrUpdated = true;
+        if (resolution.SeerrMediaId.HasValue)
+        {
+            seerrUpdated = await _seerrClient.UpdateAvailabilityAsync(resolution.SeerrMediaId.Value);
+        }
+
+        if (!seerrUpdated)
+        {
+            var entry = new RetryQueueEntry
+            {
+                Id = Guid.NewGuid(),
+                JellyfinItemId = request.JellyfinItemId,
+                Granularity = request.Granularity,
+                ProviderIdType = resolution.ProviderIdType,
+                ProviderIdValue = resolution.ProviderIdValue,
+                ArrDeleteStatus = DeleteStepStatus.Succeeded,
+                JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
+                SeerrUpdateStatus = DeleteStepStatus.Failed,
+                NextRetryAtUtc = DateTime.UtcNow.AddMinutes(5)
+            };
+            await _retryQueueStore.UpsertAsync(entry);
+            _circuitBreaker.RecordFailure();
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", "Seerr update failed", requiresManualFileCleanup, filePath);
+            return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = true, SeerrUpdated = false, QueuedForRetry = true, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath };
+        }
+
+        await LogAsync(request.JellyfinItemId, itemName, request.Granularity, request.Force ? "Forced" : (isUntracked ? "JellyfinCatalogOnly" : "SyncedDelete"), "Success", null, requiresManualFileCleanup, filePath);
+        return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = true, SeerrUpdated = seerrUpdated, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath };
     }
+
+    private async Task LogAsync(Guid itemId, string itemName, DeleteGranularity granularity, string action, string outcome, string? error, bool requiresManualFileCleanup, string? filePath)
+    {
+        await _auditLogStore.AppendAsync(new AuditLogEntry
+        {
+            Id = Guid.NewGuid(),
+            TimestampUtc = DateTime.UtcNow,
+            JellyfinItemId = itemId,
+            ItemDisplayName = itemName,
+            Granularity = granularity,
+            Action = action,
+            Outcome = outcome,
+            ErrorDetail = error,
+            RequiresManualFileCleanup = requiresManualFileCleanup,
+            FilePath = filePath
+        });
+    }
+
+    // Deliberately returns nothing to scrub today: Task 5/6's ArrClient/SeerrClient never
+    // surface raw exception text up to the orchestrator (they collapse failures to an enum/bool),
+    // and API keys are header-only, never embedded in a URL a caught exception could echo back
+    // (verified by Task 5's ApiKey_IsSentAsHeader_NeverAsQueryString test). If a future change to
+    // ArrClient/SeerrClient ever surfaces raw HTTP exception text here, it MUST be scrubbed via
+    // SecretScrubber.Scrub(text, knownKeys) before it reaches this method's caller — do not log
+    // raw exception text from those clients without scrubbing first.
+    private static string[] GetKnownSecrets() => Array.Empty<string>();
 }

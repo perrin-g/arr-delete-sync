@@ -33,7 +33,7 @@ public class DeleteOrchestratorResolveTests
         seerrClient.Setup(s => s.FindByTmdbIdAsync(603, false))
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 5 });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -58,7 +58,7 @@ public class DeleteOrchestratorResolveTests
         seerrClient.Setup(s => s.FindByTmdbIdAsync(603, false))
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.ConfirmedNotTracked });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -78,7 +78,7 @@ public class DeleteOrchestratorResolveTests
 
         var seerrClient = new Mock<ISeerrClient>();
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -93,7 +93,7 @@ public class DeleteOrchestratorResolveTests
         var accessor = new Mock<IJellyfinItemAccessor>();
         accessor.Setup(a => a.GetItem(itemId)).Returns(MakeMovie(itemId, tmdbId: null, imdbId: "tt0080455"));
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, new Mock<IArrClient>().Object, new Mock<ISeerrClient>().Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, new Mock<IArrClient>().Object, new Mock<ISeerrClient>().Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Movie);
 
@@ -125,7 +125,7 @@ public class DeleteOrchestratorResolveTests
         seerrClient.Setup(s => s.FindByTmdbIdAsync(94997, true))
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 20 });
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Series);
 
@@ -156,7 +156,7 @@ public class DeleteOrchestratorResolveTests
             .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, TmdbId = 555 });
         seerrClient.Setup(s => s.VerifyTvdbIdAsync(555, 111)).ReturnsAsync(false);
 
-        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object);
+        var orchestrator = new DeleteOrchestrator(accessor.Object, arrClient.Object, seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
 
         var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Series);
 
