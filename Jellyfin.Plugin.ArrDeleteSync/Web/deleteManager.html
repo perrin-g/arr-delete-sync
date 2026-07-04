@@ -37,6 +37,12 @@
           <button is="emby-button" type="button" class="raised" id="CancelBulkButton">Cancel</button>
         </div>
 
+        <div id="BulkResultsSection" class="verticalSection" style="display:none">
+          <h2>Results</h2>
+          <p style="color: orange;">Don't navigate away while this is in progress — there is no way to resume a partially-completed batch.</p>
+          <div id="BulkResultsList"></div>
+        </div>
+
         <div id="BreakerBanner" class="verticalSection" style="display:none; color: red;">
           Circuit breaker tripped — deletes are disabled until an admin resets it in Settings.
         </div>
@@ -364,11 +370,83 @@
           document.getElementById("BulkConfirmSection").style.display = "block";
         }
 
-        // TODO(Task 4): replace this stub with the real batch-execution flow (POST /delete per
-        // item, circuit-breaker handling, RequiresManualFileCleanup messaging, refreshing the
-        // retry queue/audit log, and closing BulkConfirmSection on completion).
         function runDeleteBatch(items) {
-          console.log("TODO: Task 4", items);
+          document.getElementById("BulkConfirmSection").style.display = "none";
+          var resultsSection = document.getElementById("BulkResultsSection");
+          var resultsList = document.getElementById("BulkResultsList");
+          resultsList.innerHTML = "";
+          resultsSection.style.display = "block";
+
+          var rows = {};
+          items.forEach(function (item) {
+            var row = document.createElement("div");
+            row.textContent = item.name + ": Pending";
+            resultsList.appendChild(row);
+            rows[item.id] = row;
+          });
+
+          var index = 0;
+          var stoppedByBreaker = false;
+
+          function runNext() {
+            if (index >= items.length) {
+              // Batch finished: clear delivered selections and refresh everything that
+              // could have changed (lists, retry queue, audit log).
+              items.forEach(function (item) { delete selectedItems[item.id]; });
+              updateSelectionBar();
+              loadMoviesTab();
+              loadTvTab();
+              refreshRetryQueue();
+              refreshAuditLog();
+              return;
+            }
+
+            var item = items[index];
+
+            if (stoppedByBreaker) {
+              rows[item.id].textContent = item.name + ": Skipped — circuit breaker tripped";
+              index++;
+              runNext();
+              return;
+            }
+
+            fetchJson("delete", {
+              type: "POST",
+              contentType: "application/json",
+              data: JSON.stringify({
+                jellyfinItemId: item.id,
+                granularity: item.granularity,
+                force: !item.resolution.HasUsableProviderId
+              })
+            }).then(function (outcome) {
+              if (outcome.BlockedReason && outcome.BlockedReason.indexOf("Circuit breaker") !== -1) {
+                breakerTripped = true;
+                stoppedByBreaker = true;
+                document.getElementById("BreakerBanner").style.display = "block";
+                rows[item.id].textContent = item.name + ": Blocked — " + outcome.BlockedReason;
+              } else if (outcome.BlockedReason) {
+                rows[item.id].textContent = item.name + ": Blocked — " + outcome.BlockedReason;
+              } else if (outcome.QueuedForRetry) {
+                rows[item.id].textContent = item.name + ": Queued for retry";
+              } else {
+                var text = item.name + ": Deleted";
+                if (outcome.RequiresManualFileCleanup) {
+                  text += outcome.FilePath
+                    ? " (file NOT deleted — remove manually at: " + outcome.FilePath + ")"
+                    : " (file NOT deleted — path unknown, check the library folder manually)";
+                }
+                rows[item.id].textContent = text;
+              }
+              index++;
+              runNext();
+            }).catch(function (err) {
+              rows[item.id].textContent = item.name + ": Request failed — " + (err.message || "see browser console for details");
+              index++;
+              runNext();
+            });
+          }
+
+          runNext();
         }
 
         function refreshRetryQueue() {
