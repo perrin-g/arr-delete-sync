@@ -357,7 +357,8 @@
             input.placeholder = "Type the item name to confirm";
             row.appendChild(input);
 
-            var confirmBtn = document.createElement("button", { is: "emby-button" });
+            var confirmBtn = document.createElement("button");
+            confirmBtn.setAttribute("is", "emby-button");
             confirmBtn.className = "raised button-delete";
             confirmBtn.textContent = "Delete";
             confirmBtn.disabled = true;
@@ -463,7 +464,8 @@
             entries.forEach(function (entry) {
               var row = document.createElement("div");
               row.textContent = entry.JellyfinItemId + " — attempts: " + entry.AttemptCount + " — last error: " + (entry.LastError || "");
-              var retryBtn = document.createElement("button", { is: "emby-button" });
+              var retryBtn = document.createElement("button");
+              retryBtn.setAttribute("is", "emby-button");
               retryBtn.className = "raised";
               retryBtn.textContent = "Retry now";
               retryBtn.onclick = function () {
@@ -472,7 +474,8 @@
                   Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
                 });
               };
-              var dismissBtn = document.createElement("button", { is: "emby-button" });
+              var dismissBtn = document.createElement("button");
+              dismissBtn.setAttribute("is", "emby-button");
               dismissBtn.className = "raised";
               dismissBtn.textContent = "Give up";
               dismissBtn.onclick = function () {
