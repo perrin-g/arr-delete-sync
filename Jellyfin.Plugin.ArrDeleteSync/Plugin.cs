@@ -58,6 +58,18 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 MenuSection = "server",
                 MenuIcon = "settings"
             },
+            // deleteManager.html's script is inlined directly in the page (not a separate
+            // <script src> file) — an earlier version used an external deleteManager.js with its
+            // own PluginPageInfo entry, keyed by the literal <script src> string, on the theory
+            // that Jellyfin resolves an embedded page's script tags that way. Live staging
+            // verification found the real bug: jellyfin-web's page loader
+            // (viewContainer.js/normalizeNewView/parseHtml) extracts ONLY the
+            // div[data-role="page"] subtree from the fetched HTML — any <script> sibling AFTER
+            // that div's closing tag, inline or external, is silently discarded and never reaches
+            // the live DOM at all, so nothing in either page's script ever ran. Fixed by nesting
+            // the script INSIDE the page div (both here and in configPage.html) and inlining
+            // deleteManager's script entirely, removing the external-file/second-PluginPageInfo
+            // workaround altogether since it's no longer needed.
             new PluginPageInfo
             {
                 Name = "deleteManager",
@@ -66,17 +78,6 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 EnableInMainMenu = true,
                 MenuSection = "server",
                 MenuIcon = "delete_sweep"
-            },
-            // Registered separately, keyed by the exact literal string used in
-            // deleteManager.html's <script src="deleteManager.js">. Jellyfin's dashboard fetches
-            // an embedded page's script tags by resolving their src against a page Name, not a
-            // filesystem path — PluginPageInfo has no dedicated "associated script" member (see
-            // Task 12 report for the reflection that confirmed this), so an external .js file
-            // needs its own entry whose Name matches the <script> src verbatim.
-            new PluginPageInfo
-            {
-                Name = "deleteManager.js",
-                EmbeddedResourcePath = string.Format("{0}.Web.deleteManager.js", GetType().Namespace)
             }
         };
     }

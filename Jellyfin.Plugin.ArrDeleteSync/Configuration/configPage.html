@@ -41,67 +41,74 @@
         </form>
       </div>
     </div>
-  </div>
-  <script type="text/javascript">
-    (function () {
-      var pluginId = "8f2c1e4a-6b3d-4a9e-9c1a-1a2b3c4d5e6f";
+    <!-- MUST be nested inside the data-role="page" div, not a sibling after it.
+         Jellyfin's client-side page loader (viewContainer.js) extracts this page via
+         wrapper.querySelector('div[data-role="page"]') and discards everything outside
+         that element's subtree — a <script> placed after the closing </div> never
+         reaches the live DOM at all and silently never executes. Found via live staging
+         verification (config fields never populated; root-caused by reading
+         jellyfin-web's actual viewContainer.js/normalizeNewView/parseHtml source). -->
+    <script type="text/javascript">
+      (function () {
+        var pluginId = "8f2c1e4a-6b3d-4a9e-9c1a-1a2b3c4d5e6f";
 
-      function loadConfig(page) {
-        Dashboard.showLoadingMsg();
-        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-          page.querySelector("#RadarrUrl").value = config.RadarrUrl || "";
-          page.querySelector("#SonarrUrl").value = config.SonarrUrl || "";
-          page.querySelector("#SeerrUrl").value = config.SeerrUrl || "";
-          page.querySelector("#RetryMaxAttempts").value = config.RetryMaxAttempts || 5;
-          page.querySelector("#CircuitBreakerThreshold").value = config.CircuitBreakerThreshold || 5;
-          Dashboard.hideLoadingMsg();
-        });
-      }
-
-      document.addEventListener("pageshow", function (e) {
-        var page = e.target.querySelector
-          ? e.target
-          : document.getElementById("ArrDeleteSyncConfigPage");
-        if (page && page.id === "ArrDeleteSyncConfigPage") {
-          loadConfig(page);
+        function loadConfig(page) {
+          Dashboard.showLoadingMsg();
+          ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+            page.querySelector("#RadarrUrl").value = config.RadarrUrl || "";
+            page.querySelector("#SonarrUrl").value = config.SonarrUrl || "";
+            page.querySelector("#SeerrUrl").value = config.SeerrUrl || "";
+            page.querySelector("#RetryMaxAttempts").value = config.RetryMaxAttempts || 5;
+            page.querySelector("#CircuitBreakerThreshold").value = config.CircuitBreakerThreshold || 5;
+            Dashboard.hideLoadingMsg();
+          });
         }
-      });
 
-      document.addEventListener("submit", function (e) {
-        var form = e.target;
-        if (form.id !== "ArrDeleteSyncConfigForm") return;
-        e.preventDefault();
+        document.addEventListener("pageshow", function (e) {
+          var page = e.target.querySelector
+            ? e.target
+            : document.getElementById("ArrDeleteSyncConfigPage");
+          if (page && page.id === "ArrDeleteSyncConfigPage") {
+            loadConfig(page);
+          }
+        });
 
-        Dashboard.showLoadingMsg();
-        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-          config.RadarrUrl = document.getElementById("RadarrUrl").value;
-          config.SonarrUrl = document.getElementById("SonarrUrl").value;
-          config.SeerrUrl = document.getElementById("SeerrUrl").value;
-          config.RetryMaxAttempts = parseInt(document.getElementById("RetryMaxAttempts").value, 10);
-          config.CircuitBreakerThreshold = parseInt(document.getElementById("CircuitBreakerThreshold").value, 10);
-          // Plaintext key inputs are sent over the already-authenticated admin API
-          // session and encrypted server-side before being written to
-          // PluginConfiguration.xml — the browser never sees the encrypted form.
-          var radarrKey = document.getElementById("RadarrApiKey").value;
-          var sonarrKey = document.getElementById("SonarrApiKey").value;
-          var seerrKey = document.getElementById("SeerrApiKey").value;
-          if (radarrKey) config.RadarrApiKeyPlaintext = radarrKey;
-          if (sonarrKey) config.SonarrApiKeyPlaintext = sonarrKey;
-          if (seerrKey) config.SeerrApiKeyPlaintext = seerrKey;
+        document.addEventListener("submit", function (e) {
+          var form = e.target;
+          if (form.id !== "ArrDeleteSyncConfigForm") return;
+          e.preventDefault();
 
-          ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
-            Dashboard.processPluginConfigurationUpdateResult();
+          Dashboard.showLoadingMsg();
+          ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+            config.RadarrUrl = document.getElementById("RadarrUrl").value;
+            config.SonarrUrl = document.getElementById("SonarrUrl").value;
+            config.SeerrUrl = document.getElementById("SeerrUrl").value;
+            config.RetryMaxAttempts = parseInt(document.getElementById("RetryMaxAttempts").value, 10);
+            config.CircuitBreakerThreshold = parseInt(document.getElementById("CircuitBreakerThreshold").value, 10);
+            // Plaintext key inputs are sent over the already-authenticated admin API
+            // session and encrypted server-side before being written to
+            // PluginConfiguration.xml — the browser never sees the encrypted form.
+            var radarrKey = document.getElementById("RadarrApiKey").value;
+            var sonarrKey = document.getElementById("SonarrApiKey").value;
+            var seerrKey = document.getElementById("SeerrApiKey").value;
+            if (radarrKey) config.RadarrApiKeyPlaintext = radarrKey;
+            if (sonarrKey) config.SonarrApiKeyPlaintext = sonarrKey;
+            if (seerrKey) config.SeerrApiKeyPlaintext = seerrKey;
+
+            ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
+              Dashboard.processPluginConfigurationUpdateResult();
+            });
           });
         });
-      });
 
-      document.addEventListener("click", function (e) {
-        if (e.target.id === "ResetBreaker") {
-          ApiClient.ajax({ type: "POST", url: ApiClient.getUrl("ArrDeleteSync/circuit-breaker/reset") })
-            .then(function () { Dashboard.alert("Circuit breaker reset."); });
-        }
-      });
-    })();
-  </script>
+        document.addEventListener("click", function (e) {
+          if (e.target.id === "ResetBreaker") {
+            ApiClient.ajax({ type: "POST", url: ApiClient.getUrl("ArrDeleteSync/circuit-breaker/reset") })
+              .then(function () { Dashboard.alert("Circuit breaker reset."); });
+          }
+        });
+      })();
+    </script>
+  </div>
 </body>
 </html>
