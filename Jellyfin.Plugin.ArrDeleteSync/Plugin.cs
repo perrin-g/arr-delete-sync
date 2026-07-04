@@ -40,10 +40,23 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         return new[]
         {
+            // jellyfin-web's findBestConfigurationPage() (client-side) resolves the "Settings"
+            // link on Dashboard -> Plugins by preferring whichever of this plugin's registered
+            // pages has EnableInMainMenu set, when more than one page exists for the same plugin
+            // ID — it does NOT match by Name. Without EnableInMainMenu here, that link incorrectly
+            // resolved to the Delete Manager page below once it gained the flag. Setting it on
+            // BOTH pages (this one is listed first, so Array.prototype.find in that client code
+            // returns this one first among menu-enabled candidates) fixes routing AND gives the
+            // settings page its own persistent sidebar entry, which is reasonable for a plugin an
+            // admin needs to revisit for config, not just deletes.
             new PluginPageInfo
             {
                 Name = Name,
-                EmbeddedResourcePath = string.Format("{0}.Configuration.configPage.html", GetType().Namespace)
+                EmbeddedResourcePath = string.Format("{0}.Configuration.configPage.html", GetType().Namespace),
+                DisplayName = "ArrDeleteSync Settings",
+                EnableInMainMenu = true,
+                MenuSection = "server",
+                MenuIcon = "settings"
             },
             new PluginPageInfo
             {
