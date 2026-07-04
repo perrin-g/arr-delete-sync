@@ -428,6 +428,8 @@
                 rows[item.id].textContent = item.name + ": Blocked — " + outcome.BlockedReason;
               } else if (outcome.QueuedForRetry) {
                 rows[item.id].textContent = item.name + ": Queued for retry";
+              } else if (outcome.JellyfinCleanedUp === false) {
+                rows[item.id].textContent = item.name + ": Cleanup failed — check Audit Log for details";
               } else {
                 var text = item.name + ": Deleted";
                 if (outcome.RequiresManualFileCleanup) {
