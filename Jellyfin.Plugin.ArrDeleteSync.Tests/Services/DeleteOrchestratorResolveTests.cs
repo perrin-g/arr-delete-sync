@@ -112,6 +112,43 @@ public class DeleteOrchestratorResolveTests
     }
 
     [Fact]
+    public async Task Resolve_SeriesWithTmdbId_ResolvesSeerrMediaId_UsingTvLookup()
+    {
+        // Regression test: ResolveAsync used to only query Seerr for movies (isSeries guard on
+        // the tmdbId lookup), so any series/season/episode item that already carries a TmdbId
+        // (the common case — arr's own metadata usually includes it) never got a SeerrMediaId,
+        // ExecuteDeleteAsync's seerrUpdated defaulted to true with no Seerr call ever made, and
+        // the delete was logged as a full "Success" while Seerr silently kept showing the title
+        // as available. Reproduced live against a real Seerr instance before this fix.
+        var itemId = Guid.NewGuid();
+        var seriesInfo = new JellyfinItemInfo
+        {
+            Id = itemId,
+            Name = "Little Britain USA",
+            Granularity = DeleteGranularity.Series,
+            TmdbId = "14880",
+            TvdbId = "83232"
+        };
+        var accessor = new Mock<IJellyfinItemAccessor>();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(seriesInfo);
+
+        var arrClient = new Mock<IArrClient>();
+        arrClient.Setup(a => a.FindByProviderIdAsync("tvdbId", "83232", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 10 });
+
+        var seerrClient = new Mock<ISeerrClient>();
+        seerrClient.Setup(s => s.FindByTmdbIdAsync(14880, true))
+            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 14 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+
+        var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Series);
+
+        seerrClient.Verify(s => s.FindByTmdbIdAsync(14880, true), Times.Once);
+        Assert.Equal(14, result.SeerrMediaId);
+    }
+
+    [Fact]
     public async Task Resolve_SeriesWithNoTmdbId_FallsBackToSeerrSearch_AndVerifiesTvdbId()
     {
         var itemId = Guid.NewGuid();

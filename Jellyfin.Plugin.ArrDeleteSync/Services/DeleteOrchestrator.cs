@@ -67,9 +67,9 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             HasUsableProviderId = true
         };
 
-        if (arrResult.State != ArrTrackingState.Indeterminate && !isSeries && int.TryParse(tmdbId, out var tmdbInt))
+        if (arrResult.State != ArrTrackingState.Indeterminate && int.TryParse(tmdbId, out var tmdbInt))
         {
-            var seerrResult = await _seerrClient.FindByTmdbIdAsync(tmdbInt, isTv: false);
+            var seerrResult = await _seerrClient.FindByTmdbIdAsync(tmdbInt, isTv: isSeries);
             if (seerrResult.State == ArrTrackingState.Tracked)
             {
                 result.SeerrMediaId = seerrResult.MediaId;
