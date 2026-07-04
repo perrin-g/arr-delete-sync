@@ -70,7 +70,7 @@ public class ArrDeleteSyncController : ControllerBase
         }
         else
         {
-            var maxAttempts = Plugin.Instance?.Configuration.RetryMaxAttempts ?? 5;
+            var maxAttempts = Plugin.Instance?.Configuration?.RetryMaxAttempts ?? 5;
             RetryBackoffCalculator.RecordFailedAttempt(entry, maxAttempts);
             await _retryQueueStore.UpsertAsync(entry);
         }
@@ -104,7 +104,7 @@ public class ArrDeleteSyncController : ControllerBase
                     : null)
         });
 
-        return Ok();
+        return Ok(new { dismissed = true });
     }
 
     [HttpGet("audit-log")]

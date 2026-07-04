@@ -174,6 +174,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             {
                 Id = Guid.NewGuid(),
                 JellyfinItemId = request.JellyfinItemId,
+                ItemDisplayName = itemName,
                 Granularity = request.Granularity,
                 ProviderIdType = resolution.ProviderIdType,
                 ProviderIdValue = resolution.ProviderIdValue,
@@ -203,6 +204,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 {
                     Id = Guid.NewGuid(),
                     JellyfinItemId = request.JellyfinItemId,
+                    ItemDisplayName = itemName,
                     Granularity = request.Granularity,
                     ProviderIdType = resolution.ProviderIdType,
                     ProviderIdValue = resolution.ProviderIdValue,
@@ -239,6 +241,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             {
                 Id = Guid.NewGuid(),
                 JellyfinItemId = request.JellyfinItemId,
+                ItemDisplayName = itemName,
                 Granularity = request.Granularity,
                 ProviderIdType = resolution.ProviderIdType,
                 ProviderIdValue = resolution.ProviderIdValue,
@@ -268,6 +271,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             {
                 Id = Guid.NewGuid(),
                 JellyfinItemId = request.JellyfinItemId,
+                ItemDisplayName = itemName,
                 Granularity = request.Granularity,
                 ProviderIdType = resolution.ProviderIdType,
                 ProviderIdValue = resolution.ProviderIdValue,
@@ -321,6 +325,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 var freshEntry = await _retryQueueStore.FindByItemIdAsync(entry.JellyfinItemId);
                 if (freshEntry != null)
                 {
+                    entry.ItemDisplayName = freshEntry.ItemDisplayName;
                     entry.ArrDeleteStatus = freshEntry.ArrDeleteStatus;
                     entry.JellyfinCleanupStatus = freshEntry.JellyfinCleanupStatus;
                     entry.SeerrUpdateStatus = freshEntry.SeerrUpdateStatus;

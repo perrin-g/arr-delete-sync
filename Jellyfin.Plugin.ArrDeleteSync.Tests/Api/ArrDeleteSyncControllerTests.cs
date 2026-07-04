@@ -80,7 +80,12 @@ public class ArrDeleteSyncControllerTests
 
         var result = await controller.DismissEntry(entryId);
 
-        Assert.IsType<OkResult>(result);
+        // Must be a real JSON body, not a bare 200 -- the Delete Manager UI's fetchJson() forces
+        // dataType: "json" on every call, and jQuery throws a client-side "unexpected end of
+        // data" parse error trying to JSON.parse an empty response body, even though the dismiss
+        // itself succeeded server-side. Reproduced live: clicking "Give up" threw exactly that
+        // error and the UI never refreshed to reflect the removal.
+        Assert.IsType<OkObjectResult>(result);
         queue.Verify(q => q.RemoveAsync(entryId), Times.Once);
         audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e => e.Action == "Dismissed")), Times.Once);
     }

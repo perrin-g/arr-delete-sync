@@ -4,6 +4,7 @@ public class RetryQueueEntry
 {
     public required Guid Id { get; set; }
     public required Guid JellyfinItemId { get; set; }
+    public string? ItemDisplayName { get; set; }
     public required DeleteGranularity Granularity { get; set; }
     public string? ProviderIdType { get; set; }
     public string? ProviderIdValue { get; set; }

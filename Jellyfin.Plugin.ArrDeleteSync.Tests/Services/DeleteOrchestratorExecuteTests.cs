@@ -102,7 +102,7 @@ public class DeleteOrchestratorExecuteTests
         Assert.False(outcome.JellyfinCleanedUp);
         accessor.Verify(a => a.DeleteItem(It.IsAny<Guid>(), out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny), Times.Never);
         seerr.Verify(s => s.UpdateAvailabilityAsync(It.IsAny<int>()), Times.Never);
-        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Failed)), Times.Once);
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Failed && e.ItemDisplayName == "Test Movie")), Times.Once);
         breaker.Verify(b => b.RecordFailure(), Times.Once);
     }
 
@@ -131,7 +131,8 @@ public class DeleteOrchestratorExecuteTests
         seerr.Verify(s => s.UpdateAvailabilityAsync(It.IsAny<int>()), Times.Never);
         queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e =>
             e.ArrDeleteStatus == DeleteStepStatus.Succeeded &&
-            e.JellyfinCleanupStatus == DeleteStepStatus.Failed)), Times.Once);
+            e.JellyfinCleanupStatus == DeleteStepStatus.Failed &&
+            e.ItemDisplayName == "Test Movie")), Times.Once);
     }
 
     [Fact]
@@ -162,7 +163,8 @@ public class DeleteOrchestratorExecuteTests
         queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e =>
             e.ArrDeleteStatus == DeleteStepStatus.Succeeded &&
             e.JellyfinCleanupStatus == DeleteStepStatus.Succeeded &&
-            e.SeerrUpdateStatus == DeleteStepStatus.Failed)), Times.Once);
+            e.SeerrUpdateStatus == DeleteStepStatus.Failed &&
+            e.ItemDisplayName == "Test Movie")), Times.Once);
     }
 
     [Fact]
@@ -183,7 +185,7 @@ public class DeleteOrchestratorExecuteTests
         Assert.True(outcome.QueuedForRetry);
         arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
         accessor.Verify(a => a.DeleteItem(It.IsAny<Guid>(), out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny), Times.Never);
-        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Pending)), Times.Once);
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Pending && e.ItemDisplayName == "Test Movie")), Times.Once);
     }
 
     [Fact]
