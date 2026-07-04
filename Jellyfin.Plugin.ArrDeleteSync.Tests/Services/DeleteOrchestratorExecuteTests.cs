@@ -34,15 +34,20 @@ public class DeleteOrchestratorExecuteTests
     [Fact]
     public async Task Execute_Rejects_WhenCircuitBreakerTripped()
     {
+        // Regression test: the circuit-breaker check used to run before the item was ever looked
+        // up, so every breaker-blocked audit entry logged ItemDisplayName as a hardcoded
+        // "unknown" instead of the real name -- reproduced live via the Delete Manager UI.
+        var itemId = Guid.NewGuid();
         var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(MakeMovie(itemId));
         breaker.Setup(b => b.IsTripped).Returns(true);
         var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
-        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie });
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
 
         Assert.False(outcome.ArrDeleted);
         Assert.NotNull(outcome.BlockedReason);
-        audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e => e.Action == "Blocked")), Times.Once);
+        audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e => e.Action == "Blocked" && e.ItemDisplayName == "Test Movie")), Times.Once);
         arr.Verify(a => a.FindByProviderIdAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Never);
     }
 

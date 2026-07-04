@@ -119,15 +119,20 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
 
     public async Task<DeleteOutcome> ExecuteDeleteAsync(DeleteRequest request)
     {
+        // Resolved up front (independent of arr/Seerr resolution below) so the circuit-breaker
+        // block below can log the actual item name instead of a hardcoded placeholder -- this
+        // used to run before the item was ever looked up, showing "unknown" for every entry
+        // blocked by a tripped breaker.
+        var itemInfo = _itemAccessor.GetItem(request.JellyfinItemId);
+        var itemName = itemInfo?.Name ?? "(deleted)";
+
         if (_circuitBreaker.IsTripped)
         {
-            await LogAsync(request.JellyfinItemId, "unknown", request.Granularity, "Blocked", "Failed", "Circuit breaker is tripped", false, null);
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Circuit breaker is tripped", false, null);
             return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Circuit breaker is tripped — repeated failures detected. An admin must manually reset it." };
         }
 
         var resolution = await ResolveAsync(request.JellyfinItemId, request.Granularity);
-        var itemInfo = _itemAccessor.GetItem(request.JellyfinItemId);
-        var itemName = itemInfo?.Name ?? "(deleted)";
 
         if (!resolution.HasUsableProviderId && !request.Force)
         {
