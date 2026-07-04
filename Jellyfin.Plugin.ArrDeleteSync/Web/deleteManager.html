@@ -9,8 +9,24 @@
         <h1>Delete Manager</h1>
 
         <div class="verticalSection">
-          <input is="emby-input" type="text" id="LibrarySearch" label="Search library" />
-          <div id="LibraryResults"></div>
+          <div style="display:flex;">
+            <button is="emby-button" type="button" class="raised" id="MoviesTabButton">Movies</button>
+            <button is="emby-button" type="button" class="raised" id="TvTabButton">TV</button>
+          </div>
+
+          <div id="MoviesTab">
+            <input is="emby-input" type="text" id="MoviesFilter" label="Filter movies" />
+            <div id="MoviesList"></div>
+          </div>
+
+          <div id="TvTab" style="display:none">
+            <input is="emby-input" type="text" id="TvFilter" label="Filter series" />
+            <div id="TvList"></div>
+          </div>
+        </div>
+
+        <div id="SelectionBar" class="verticalSection" style="display:none">
+          <button is="emby-button" type="button" class="raised button-submit" id="DeleteSelectedButton">Delete Selected (0)</button>
         </div>
 
         <div id="PreviewSection" class="verticalSection" style="display:none">
@@ -52,6 +68,123 @@
         var currentGranularity = null;
         var breakerTripped = false; // best-effort, reactive only — see note below
 
+        var selectedItems = {}; // keyed by Jellyfin item Id: { id, name, type, granularity, ancestorIds }
+        var allMovies = [];
+        var allSeries = [];
+        var currentTab = "movies"; // "movies" | "tv"
+
+        function updateSelectionBar() {
+          var count = Object.keys(selectedItems).length;
+          var bar = document.getElementById("SelectionBar");
+          var btn = document.getElementById("DeleteSelectedButton");
+          if (count === 0) {
+            bar.style.display = "none";
+          } else {
+            bar.style.display = "block";
+            btn.textContent = "Delete Selected (" + count + ")";
+          }
+        }
+
+        function rerenderCurrentTab() {
+          if (currentTab === "movies") {
+            renderMoviesList(document.getElementById("MoviesFilter").value);
+          } else {
+            renderTvList(document.getElementById("TvFilter").value);
+          }
+        }
+
+        function toggleSelection(item, granularity, ancestorIds) {
+          if (selectedItems[item.Id]) {
+            delete selectedItems[item.Id];
+          } else {
+            // A parent selection supersedes any already-selected descendants — clear them.
+            Object.keys(selectedItems).forEach(function (id) {
+              if (selectedItems[id].ancestorIds.indexOf(item.Id) !== -1) {
+                delete selectedItems[id];
+              }
+            });
+            selectedItems[item.Id] = { id: item.Id, name: item.Name, type: item.Type, granularity: granularity, ancestorIds: ancestorIds || [] };
+          }
+          updateSelectionBar();
+          rerenderCurrentTab();
+        }
+
+        // True if any ancestor of this item (per ancestorIds) is currently selected —
+        // used to grey out a child checkbox once its parent is selected.
+        function isDisabledByAncestor(ancestorIds) {
+          return (ancestorIds || []).some(function (id) { return !!selectedItems[id]; });
+        }
+
+        // True if any currently-tracked selection is a descendant of this item —
+        // used to grey out a parent checkbox once one of its children is selected.
+        function isDisabledByDescendant(itemId) {
+          return Object.keys(selectedItems).some(function (id) {
+            return selectedItems[id].ancestorIds.indexOf(itemId) !== -1;
+          });
+        }
+
+        function makeCheckboxRow(item, granularity, ancestorIds) {
+          var row = document.createElement("div");
+          var checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = !!selectedItems[item.Id];
+          checkbox.disabled = isDisabledByAncestor(ancestorIds) || isDisabledByDescendant(item.Id);
+          checkbox.onchange = function () {
+            toggleSelection(item, granularity, ancestorIds);
+          };
+          var label = document.createElement("span");
+          label.textContent = " " + item.Name;
+          row.appendChild(checkbox);
+          row.appendChild(label);
+          return row;
+        }
+
+        function loadMoviesTab() {
+          ApiClient.getItems(ApiClient.getCurrentUserId(), {
+            IncludeItemTypes: "Movie",
+            Recursive: true
+          }).then(function (result) {
+            allMovies = (result && result.Items) || [];
+            renderMoviesList(document.getElementById("MoviesFilter").value);
+          }).catch(function (err) {
+            Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+          });
+        }
+
+        function renderMoviesList(filterText) {
+          var list = document.getElementById("MoviesList");
+          list.innerHTML = "";
+          var filter = (filterText || "").toLowerCase();
+          allMovies
+            .filter(function (item) { return item.Name.toLowerCase().indexOf(filter) !== -1; })
+            .forEach(function (item) {
+              list.appendChild(makeCheckboxRow(item, "Movie", []));
+            });
+        }
+
+        function loadTvTab() {
+          ApiClient.getItems(ApiClient.getCurrentUserId(), {
+            IncludeItemTypes: "Series",
+            Recursive: true
+          }).then(function (result) {
+            allSeries = (result && result.Items) || [];
+            renderTvList(document.getElementById("TvFilter").value);
+          }).catch(function (err) {
+            Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+          });
+        }
+
+        function renderTvList(filterText) {
+          var list = document.getElementById("TvList");
+          list.innerHTML = "";
+          var filter = (filterText || "").toLowerCase();
+          allSeries
+            .filter(function (item) { return item.Name.toLowerCase().indexOf(filter) !== -1; })
+            .forEach(function (item) {
+              list.appendChild(makeCheckboxRow(item, "Series", []));
+            });
+        }
+
         function fetchJson(path, options) {
           return ApiClient.ajax(Object.assign({ url: ApiClient.getUrl("ArrDeleteSync/" + path), dataType: "json" }, options || {}));
         }
@@ -68,43 +201,6 @@
             return itemType;
           }
           return null;
-        }
-
-        function renderLibraryResults(items) {
-          var list = document.getElementById("LibraryResults");
-          list.innerHTML = "";
-          items.forEach(function (item) {
-            var granularity = mapItemTypeToGranularity(item.Type);
-            if (!granularity) {
-              return;
-            }
-            var row = document.createElement("div");
-            row.textContent = item.Name + " (" + item.Type + ")";
-            row.style.cursor = "pointer";
-            row.onclick = function () {
-              showPreview(item, granularity);
-            };
-            list.appendChild(row);
-          });
-        }
-
-        var searchDebounceHandle = null;
-        function searchLibrary(term) {
-          var resultsDiv = document.getElementById("LibraryResults");
-          if (!term) {
-            resultsDiv.innerHTML = "";
-            return;
-          }
-          ApiClient.getItems(ApiClient.getCurrentUserId(), {
-            SearchTerm: term,
-            IncludeItemTypes: "Movie,Series,Season,Episode",
-            Recursive: true,
-            Limit: 25
-          }).then(function (result) {
-            renderLibraryResults((result && result.Items) || []);
-          }).catch(function (err) {
-            Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
-          });
         }
 
         function showPreview(item, granularity) {
@@ -261,20 +357,30 @@
           if (!e.target.id || e.target.id !== "ArrDeleteSyncManagerPage") return;
           refreshRetryQueue();
           refreshAuditLog();
+          loadMoviesTab();
+          loadTvTab();
         });
 
         document.addEventListener("input", function (e) {
-          if (e.target.id !== "LibrarySearch") return;
-          var term = e.target.value;
-          if (searchDebounceHandle) {
-            clearTimeout(searchDebounceHandle);
+          if (e.target.id === "MoviesFilter") {
+            renderMoviesList(e.target.value);
           }
-          searchDebounceHandle = setTimeout(function () {
-            searchLibrary(term);
-          }, 300);
+          if (e.target.id === "TvFilter") {
+            renderTvList(e.target.value);
+          }
         });
 
         document.addEventListener("click", function (e) {
+          if (e.target.id === "MoviesTabButton") {
+            currentTab = "movies";
+            document.getElementById("MoviesTab").style.display = "block";
+            document.getElementById("TvTab").style.display = "none";
+          }
+          if (e.target.id === "TvTabButton") {
+            currentTab = "tv";
+            document.getElementById("MoviesTab").style.display = "none";
+            document.getElementById("TvTab").style.display = "block";
+          }
           if (e.target.id === "CancelDeleteButton") {
             document.getElementById("PreviewSection").style.display = "none";
           }
