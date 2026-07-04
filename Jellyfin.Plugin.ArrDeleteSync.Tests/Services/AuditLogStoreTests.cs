@@ -100,4 +100,51 @@ public class AuditLogStoreTests : IDisposable
         Assert.True(File.Exists(expectedFilePath), "the real file should exist after a successful write");
         Assert.False(File.Exists(expectedTempPath), "the temp file should not survive a successful rename");
     }
+
+    [Fact]
+    public async Task Append_PrunesEntriesOlderThanRetentionPeriod()
+    {
+        var store = new AuditLogStore(_tempDir, retentionDays: 15);
+        var oldEntry = MakeEntry();
+        oldEntry.TimestampUtc = DateTime.UtcNow.AddDays(-16);
+        await store.AppendAsync(oldEntry);
+
+        var freshEntry = MakeEntry();
+        await store.AppendAsync(freshEntry);
+
+        var all = await store.GetAllAsync();
+
+        Assert.Single(all);
+        Assert.Equal(freshEntry.Id, all[0].Id);
+    }
+
+    [Fact]
+    public async Task Append_KeepsEntriesWithinRetentionPeriod()
+    {
+        var store = new AuditLogStore(_tempDir, retentionDays: 15);
+        var recentEntry = MakeEntry();
+        recentEntry.TimestampUtc = DateTime.UtcNow.AddDays(-14);
+        await store.AppendAsync(recentEntry);
+
+        await store.AppendAsync(MakeEntry());
+
+        var all = await store.GetAllAsync();
+
+        Assert.Equal(2, all.Count);
+        Assert.Contains(all, e => e.Id == recentEntry.Id);
+    }
+
+    [Fact]
+    public async Task Append_WithDefaultRetention_Keeps15Days()
+    {
+        var store = new AuditLogStore(_tempDir);
+        var oldEntry = MakeEntry();
+        oldEntry.TimestampUtc = DateTime.UtcNow.AddDays(-16);
+        await store.AppendAsync(oldEntry);
+        await store.AppendAsync(MakeEntry());
+
+        var all = await store.GetAllAsync();
+
+        Assert.Single(all);
+    }
 }

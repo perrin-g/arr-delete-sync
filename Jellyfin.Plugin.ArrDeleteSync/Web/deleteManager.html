@@ -17,8 +17,8 @@
           <h2>Confirm delete</h2>
           <div id="PreviewContent"></div>
           <input is="emby-input" type="text" id="ConfirmNameInput" style="display:none" label="Type the item name to confirm" />
-          <button is="emby-button" type="button" id="ConfirmDeleteButton">Delete</button>
-          <button is="emby-button" type="button" id="CancelDeleteButton">Cancel</button>
+          <button is="emby-button" type="button" class="raised button-delete" id="ConfirmDeleteButton">Delete</button>
+          <button is="emby-button" type="button" class="raised" id="CancelDeleteButton">Cancel</button>
         </div>
 
         <div id="BreakerBanner" class="verticalSection" style="display:none; color: red;">
@@ -209,14 +209,16 @@
             entries.forEach(function (entry) {
               var row = document.createElement("div");
               row.textContent = entry.JellyfinItemId + " — attempts: " + entry.AttemptCount + " — last error: " + (entry.LastError || "");
-              var retryBtn = document.createElement("button");
+              var retryBtn = document.createElement("button", { is: "emby-button" });
+              retryBtn.className = "raised";
               retryBtn.textContent = "Retry now";
               retryBtn.onclick = function () {
                 fetchJson("retry-queue/" + entry.Id + "/retry", { type: "POST" }).then(refreshRetryQueue).catch(function (err) {
                   Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
                 });
               };
-              var dismissBtn = document.createElement("button");
+              var dismissBtn = document.createElement("button", { is: "emby-button" });
+              dismissBtn.className = "raised";
               dismissBtn.textContent = "Give up";
               dismissBtn.onclick = function () {
                 // Field names reflect the corrected architecture: *arr now owns file deletion, so

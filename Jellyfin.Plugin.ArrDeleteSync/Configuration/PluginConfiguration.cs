@@ -24,4 +24,5 @@ public class PluginConfiguration : BasePluginConfiguration
     public int RetryMaxAttempts { get; set; } = 5;
     public int CircuitBreakerThreshold { get; set; } = 5;
     public int CircuitBreakerWindowMinutes { get; set; } = 15;
+    public int AuditLogRetentionDays { get; set; } = 15;
 }

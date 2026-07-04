@@ -12,28 +12,29 @@
             <h2>Radarr</h2>
             <input is="emby-input" type="text" id="RadarrUrl" label="URL" />
             <input is="emby-input" type="password" id="RadarrApiKey" label="API Key" />
-            <button is="emby-button" type="button" id="TestRadarr">Test Connection</button>
+            <button is="emby-button" type="button" class="raised" id="TestRadarr">Test Connection</button>
             <div id="RadarrTestResult"></div>
           </div>
           <div class="verticalSection">
             <h2>Sonarr</h2>
             <input is="emby-input" type="text" id="SonarrUrl" label="URL" />
             <input is="emby-input" type="password" id="SonarrApiKey" label="API Key" />
-            <button is="emby-button" type="button" id="TestSonarr">Test Connection</button>
+            <button is="emby-button" type="button" class="raised" id="TestSonarr">Test Connection</button>
             <div id="SonarrTestResult"></div>
           </div>
           <div class="verticalSection">
             <h2>Seerr</h2>
             <input is="emby-input" type="text" id="SeerrUrl" label="URL" />
             <input is="emby-input" type="password" id="SeerrApiKey" label="API Key" />
-            <button is="emby-button" type="button" id="TestSeerr">Test Connection</button>
+            <button is="emby-button" type="button" class="raised" id="TestSeerr">Test Connection</button>
             <div id="SeerrTestResult"></div>
           </div>
           <div class="verticalSection">
             <h2>Reliability</h2>
             <input is="emby-input" type="number" id="RetryMaxAttempts" label="Max retry attempts" />
             <input is="emby-input" type="number" id="CircuitBreakerThreshold" label="Circuit breaker failure threshold" />
-            <button is="emby-button" type="button" id="ResetBreaker">Reset circuit breaker</button>
+            <input is="emby-input" type="number" id="AuditLogRetentionDays" label="Audit log retention (days)" />
+            <button is="emby-button" type="button" class="raised" id="ResetBreaker">Reset circuit breaker</button>
           </div>
           <button is="emby-button" type="submit" class="raised button-submit block">
             <span>Save</span>
@@ -60,6 +61,7 @@
             page.querySelector("#SeerrUrl").value = config.SeerrUrl || "";
             page.querySelector("#RetryMaxAttempts").value = config.RetryMaxAttempts || 5;
             page.querySelector("#CircuitBreakerThreshold").value = config.CircuitBreakerThreshold || 5;
+            page.querySelector("#AuditLogRetentionDays").value = config.AuditLogRetentionDays || 15;
             Dashboard.hideLoadingMsg();
           });
         }
@@ -85,6 +87,7 @@
             config.SeerrUrl = document.getElementById("SeerrUrl").value;
             config.RetryMaxAttempts = parseInt(document.getElementById("RetryMaxAttempts").value, 10);
             config.CircuitBreakerThreshold = parseInt(document.getElementById("CircuitBreakerThreshold").value, 10);
+            config.AuditLogRetentionDays = parseInt(document.getElementById("AuditLogRetentionDays").value, 10);
             // Plaintext key inputs are sent over the already-authenticated admin API
             // session and encrypted server-side before being written to
             // PluginConfiguration.xml — the browser never sees the encrypted form.

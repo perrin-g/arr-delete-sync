@@ -35,7 +35,8 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IAuditLogStore>(provider =>
         {
             var paths = provider.GetRequiredService<IApplicationPaths>();
-            return new AuditLogStore(Path.Combine(paths.DataPath, "arrdeletesync"));
+            var config = Plugin.Instance!.Configuration;
+            return new AuditLogStore(Path.Combine(paths.DataPath, "arrdeletesync"), config.AuditLogRetentionDays);
         });
         serviceCollection.AddHttpClient();
 
