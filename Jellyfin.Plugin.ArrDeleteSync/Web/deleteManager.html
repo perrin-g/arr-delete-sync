@@ -154,6 +154,7 @@
             allMovies = (result && result.Items) || [];
             renderMoviesList(document.getElementById("MoviesFilter").value);
           }).catch(function (err) {
+            console.error(err);
             Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
           });
         }
@@ -184,6 +185,7 @@
             allSeries = (result && result.Items) || [];
             renderTvList(document.getElementById("TvFilter").value);
           }).catch(function (err) {
+            console.error(err);
             Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
           });
         }
@@ -230,6 +232,7 @@
                 expandedNodes[series.Id] = true;
                 renderTvList(document.getElementById("TvFilter").value);
               }).catch(function (err) {
+                console.error(err);
                 Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
               });
             }
@@ -259,6 +262,7 @@
                 expandedNodes[season.Id] = true;
                 renderTvList(document.getElementById("TvFilter").value);
               }).catch(function (err) {
+                console.error(err);
                 Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
               });
             }
@@ -309,6 +313,7 @@
                 renderBulkConfirm(safeItems, needsConfirmationItems);
               }
             }).catch(function (err) {
+              console.error(err);
               Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
               // Dropped from the batch — no resolution object to classify it with, so it goes
               // into neither safeItems nor needsConfirmationItems. Still counts toward
@@ -463,6 +468,7 @@
               retryBtn.textContent = "Retry now";
               retryBtn.onclick = function () {
                 fetchJson("retry-queue/" + entry.Id + "/retry", { type: "POST" }).then(refreshRetryQueue).catch(function (err) {
+                  console.error(err);
                   Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
                 });
               };
@@ -480,6 +486,7 @@
                   }
                 }
                 fetchJson("retry-queue/" + entry.Id + "/dismiss", { type: "POST" }).then(refreshRetryQueue).catch(function (err) {
+                  console.error(err);
                   Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
                 });
               };
@@ -488,6 +495,7 @@
               list.appendChild(row);
             });
           }).catch(function (err) {
+            console.error(err);
             Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
           });
         }
@@ -502,6 +510,7 @@
               list.appendChild(row);
             });
           }).catch(function (err) {
+            console.error(err);
             Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
           });
         }
