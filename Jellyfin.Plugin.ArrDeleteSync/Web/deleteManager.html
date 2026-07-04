@@ -29,12 +29,12 @@
           <button is="emby-button" type="button" class="raised button-submit" id="DeleteSelectedButton">Delete Selected (0)</button>
         </div>
 
-        <div id="PreviewSection" class="verticalSection" style="display:none">
+        <div id="BulkConfirmSection" class="verticalSection" style="display:none">
           <h2>Confirm delete</h2>
-          <div id="PreviewContent"></div>
-          <input is="emby-input" type="text" id="ConfirmNameInput" style="display:none" label="Type the item name to confirm" />
-          <button is="emby-button" type="button" class="raised button-delete" id="ConfirmDeleteButton">Delete</button>
-          <button is="emby-button" type="button" class="raised" id="CancelDeleteButton">Cancel</button>
+          <div id="SafeItemsList"></div>
+          <button is="emby-button" type="button" class="raised button-delete" id="DeleteSafeItemsButton" style="display:none">Delete safe items</button>
+          <div id="NeedsConfirmationList"></div>
+          <button is="emby-button" type="button" class="raised" id="CancelBulkButton">Cancel</button>
         </div>
 
         <div id="BreakerBanner" class="verticalSection" style="display:none; color: red;">
@@ -63,9 +63,6 @@
          matching configPage.html's same fix. -->
     <script type="text/javascript">
       (function () {
-        var currentResolution = null;
-        var currentItem = null;
-        var currentGranularity = null;
         var breakerTripped = false; // best-effort, reactive only — see note below
 
         var selectedItems = {}; // keyed by Jellyfin item Id: { id, name, type, granularity, ancestorIds }
@@ -279,109 +276,92 @@
           return !resolution.HasUsableProviderId || granularity === "Series" || granularity === "Season";
         }
 
-        // Jellyfin's native BaseItemDto.Type values ("Movie", "Series", "Season", "Episode", ...) line
-        // up 1:1 with this plugin's DeleteGranularity enum names for every type this dashboard supports
-        // deleting. Anything else (BoxSet, Folder, etc.) isn't a supported delete target here.
-        function mapItemTypeToGranularity(itemType) {
-          if (itemType === "Movie" || itemType === "Series" || itemType === "Season" || itemType === "Episode") {
-            return itemType;
-          }
-          return null;
-        }
+        var confirmedSafeItems = [];
 
-        function showPreview(item, granularity) {
+        function openBulkConfirm() {
           if (breakerTripped) {
             document.getElementById("BreakerBanner").style.display = "block";
             Dashboard.alert("Deletes are disabled until an admin resets the circuit breaker in Settings.");
             return;
           }
 
-          currentItem = item;
-          currentGranularity = granularity;
-          fetchJson("resolve?itemId=" + item.Id + "&granularity=" + granularity).then(function (resolution) {
-            currentResolution = resolution;
-            var page = document.getElementById("ArrDeleteSyncManagerPage");
-            var content = page.querySelector("#PreviewContent");
+          var items = Object.keys(selectedItems).map(function (id) { return selectedItems[id]; });
+          var resolvedCount = 0;
+          var safeItems = [];
+          var needsConfirmationItems = [];
 
-            if (!resolution.HasUsableProviderId) {
-              content.textContent = "Not identified in Jellyfin (no usable provider ID). Force-deleting " +
-                item.Name + " will remove the file WITHOUT syncing arr/Seerr. If this item is actually " +
-                "tracked by arr under a different identity, arr will not know it was deleted and is " +
-                "likely to re-download it.";
-            } else if (resolution.State === "Indeterminate") {
-              content.textContent = "Couldn't verify arr/Seerr status right now — try again shortly.";
-              page.querySelector("#ConfirmDeleteButton").disabled = true;
-              page.querySelector("#PreviewSection").style.display = "block";
-              return;
-            } else {
-              var label = resolution.ArrTitle
-                ? resolution.ArrTitle + " (" + resolution.ArrYear + ") — arr-side match"
-                : "No arr match found";
-              if (resolution.SeerrMatchFromFallback) {
-                label += " | Seerr fallback match found by title search";
+          items.forEach(function (item) {
+            fetchJson("resolve?itemId=" + item.id + "&granularity=" + item.granularity).then(function (resolution) {
+              item.resolution = resolution;
+              if (needsTypedConfirmation(item.granularity, resolution)) {
+                needsConfirmationItems.push(item);
+              } else {
+                safeItems.push(item);
               }
-              content.textContent = "Jellyfin shows: " + item.Name + ". " + label +
-                ". Deleting is irreversible — recovery requires re-requesting through Seerr.";
-            }
-
-            var confirmInput = page.querySelector("#ConfirmNameInput");
-            if (needsTypedConfirmation(granularity, resolution)) {
-              confirmInput.style.display = "block";
-              confirmInput.value = "";
-            } else {
-              confirmInput.style.display = "none";
-            }
-
-            page.querySelector("#ConfirmDeleteButton").disabled = false;
-            page.querySelector("#PreviewSection").style.display = "block";
-          }).catch(function (err) {
-            Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+              resolvedCount++;
+              if (resolvedCount === items.length) {
+                renderBulkConfirm(safeItems, needsConfirmationItems);
+              }
+            }).catch(function (err) {
+              Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+            });
           });
         }
 
-        function confirmDelete(granularity) {
-          var page = document.getElementById("ArrDeleteSyncManagerPage");
-          var confirmInput = page.querySelector("#ConfirmNameInput");
+        function renderBulkConfirm(safeItems, needsConfirmationItems) {
+          confirmedSafeItems = safeItems;
 
-          if (needsTypedConfirmation(granularity, currentResolution) &&
-              confirmInput.value.trim() !== currentItem.Name.trim()) {
-            Dashboard.alert("Type the exact item name to confirm this delete.");
-            return;
-          }
-
-          fetchJson("delete", {
-            type: "POST",
-            contentType: "application/json",
-            data: JSON.stringify({
-              jellyfinItemId: currentItem.Id,
-              granularity: granularity,
-              force: !currentResolution.HasUsableProviderId
-            })
-          }).then(function (outcome) {
-            // The API has no dedicated "circuit breaker tripped" flag/status endpoint — this is the
-            // only signal available client-side, and it is necessarily reactive (learned only after an
-            // attempt is rejected), not pre-emptive. A future task should add a
-            // GET /ArrDeleteSync/circuit-breaker/status endpoint if true pre-attempt client-side
-            // blocking is required; see the task report for detail.
-            if (outcome.BlockedReason && outcome.BlockedReason.indexOf("Circuit breaker") !== -1) {
-              breakerTripped = true;
-              document.getElementById("BreakerBanner").style.display = "block";
-            }
-
-            var message = outcome.BlockedReason ||
-              (outcome.QueuedForRetry ? "Some steps queued for retry — see Retry Queue below." : "Deleted.");
-            if (outcome.RequiresManualFileCleanup) {
-              message += outcome.FilePath
-                ? (" The file was NOT deleted (arr doesn't track it) — remove it manually at: " + outcome.FilePath)
-                : " The file was NOT deleted (arr doesn't track it) — the exact path could not be determined; check the item's library folder manually.";
-            }
-            Dashboard.alert(message);
-            page.querySelector("#PreviewSection").style.display = "none";
-            refreshRetryQueue();
-            refreshAuditLog();
-          }).catch(function (err) {
-            Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+          var safeList = document.getElementById("SafeItemsList");
+          safeList.innerHTML = "";
+          safeItems.forEach(function (item) {
+            var row = document.createElement("div");
+            row.textContent = item.name + " (" + item.granularity + ")";
+            safeList.appendChild(row);
           });
+          var safeBtn = document.getElementById("DeleteSafeItemsButton");
+          safeBtn.style.display = safeItems.length > 0 ? "block" : "none";
+          safeBtn.textContent = "Delete " + safeItems.length + " safe item(s)";
+
+          var needsList = document.getElementById("NeedsConfirmationList");
+          needsList.innerHTML = "";
+          needsConfirmationItems.forEach(function (item) {
+            var row = document.createElement("div");
+
+            var reasonText = !item.resolution.HasUsableProviderId
+              ? "Not identified in Jellyfin (no usable provider ID). Force-deleting will remove the file WITHOUT syncing arr/Seerr."
+              : "Deleting " + item.granularity + "-level items is irreversible — recovery requires re-requesting through Seerr.";
+            var reasonEl = document.createElement("div");
+            reasonEl.textContent = item.name + ": " + reasonText;
+            row.appendChild(reasonEl);
+
+            var input = document.createElement("input");
+            input.type = "text";
+            input.placeholder = "Type the item name to confirm";
+            row.appendChild(input);
+
+            var confirmBtn = document.createElement("button", { is: "emby-button" });
+            confirmBtn.className = "raised button-delete";
+            confirmBtn.textContent = "Delete";
+            confirmBtn.disabled = true;
+            input.oninput = function () {
+              confirmBtn.disabled = input.value.trim() !== item.name.trim();
+            };
+            confirmBtn.onclick = function () {
+              runDeleteBatch([item]);
+            };
+            row.appendChild(confirmBtn);
+
+            needsList.appendChild(row);
+          });
+
+          document.getElementById("BulkConfirmSection").style.display = "block";
+        }
+
+        // TODO(Task 4): replace this stub with the real batch-execution flow (POST /delete per
+        // item, circuit-breaker handling, RequiresManualFileCleanup messaging, refreshing the
+        // retry queue/audit log, and closing BulkConfirmSection on completion).
+        function runDeleteBatch(items) {
+          console.log("TODO: Task 4", items);
         }
 
         function refreshRetryQueue() {
@@ -467,16 +447,14 @@
             document.getElementById("MoviesTab").style.display = "none";
             document.getElementById("TvTab").style.display = "block";
           }
-          if (e.target.id === "CancelDeleteButton") {
-            document.getElementById("PreviewSection").style.display = "none";
+          if (e.target.id === "DeleteSelectedButton") {
+            openBulkConfirm();
           }
-          if (e.target.id === "ConfirmDeleteButton") {
-            if (breakerTripped) {
-              document.getElementById("BreakerBanner").style.display = "block";
-              Dashboard.alert("Deletes are disabled until an admin resets the circuit breaker in Settings.");
-              return;
-            }
-            confirmDelete(currentGranularity);
+          if (e.target.id === "DeleteSafeItemsButton") {
+            runDeleteBatch(confirmedSafeItems);
+          }
+          if (e.target.id === "CancelBulkButton") {
+            document.getElementById("BulkConfirmSection").style.display = "none";
           }
         });
       })();
