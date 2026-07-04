@@ -21,9 +21,17 @@ public class ArrClient : IArrClient
 
     public async Task<ArrLookupResult> FindByProviderIdAsync(string providerIdType, string providerIdValue, bool isSeries)
     {
+        if (!int.TryParse(providerIdValue, out var numericProviderId) || numericProviderId < 0)
+        {
+            // TMDB/TVDB IDs are always non-negative integers. Reject anything else before it
+            // reaches the URL so a malformed/poisoned value scraped from media metadata can't
+            // inject extra query parameters into the Radarr/Sonarr request.
+            return new ArrLookupResult { State = ArrTrackingState.Indeterminate };
+        }
+
         var resource = isSeries ? "series" : "movie";
         var queryParam = providerIdType.Equals("tvdbId", StringComparison.OrdinalIgnoreCase) ? "tvdbId" : "tmdbId";
-        var url = $"{_baseUrl}/api/v3/{resource}?{queryParam}={providerIdValue}";
+        var url = $"{_baseUrl}/api/v3/{resource}?{queryParam}={numericProviderId}";
 
         try
         {

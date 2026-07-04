@@ -80,6 +80,22 @@ public class ArrClientTests
         Assert.Equal(ArrTrackingState.Indeterminate, result.State);
     }
 
+    [Theory]
+    [InlineData("603&foo=bar")]
+    [InlineData("not-a-number")]
+    [InlineData("-1")]
+    [InlineData("")]
+    public async Task FindByProviderId_ReturnsIndeterminate_WithoutHttpCall_WhenProviderIdIsNotANonNegativeInteger(string maliciousOrMalformedValue)
+    {
+        var handler = new FakeHttpMessageHandler(req => throw new InvalidOperationException("HTTP call should never have been made for an invalid provider ID."));
+        var client = new ArrClient(new HttpClient(handler), "http://radarr:7878", "fakekey");
+
+        var result = await client.FindByProviderIdAsync("tmdbId", maliciousOrMalformedValue, isSeries: false);
+
+        Assert.Equal(ArrTrackingState.Indeterminate, result.State);
+        Assert.Null(handler.LastRequest);
+    }
+
     [Fact]
     public async Task ApiKey_IsSentAsHeader_NeverAsQueryString()
     {

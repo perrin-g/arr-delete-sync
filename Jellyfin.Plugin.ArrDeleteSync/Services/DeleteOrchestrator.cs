@@ -430,12 +430,31 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         });
     }
 
-    // Deliberately returns nothing to scrub today: Task 5/6's ArrClient/SeerrClient never
-    // surface raw exception text up to the orchestrator (they collapse failures to an enum/bool),
-    // and API keys are header-only, never embedded in a URL a caught exception could echo back
-    // (verified by Task 5's ApiKey_IsSentAsHeader_NeverAsQueryString test). If a future change to
-    // ArrClient/SeerrClient ever surfaces raw HTTP exception text here, it MUST be scrubbed via
-    // SecretScrubber.Scrub(text, knownKeys) before it reaches this method's caller — do not log
-    // raw exception text from those clients without scrubbing first.
-    private static string[] GetKnownSecrets() => Array.Empty<string>();
+    // Task 5/6's ArrClient/SeerrClient never surface raw exception text up to the orchestrator
+    // today (they collapse failures to an enum/bool), and API keys are header-only, never
+    // embedded in a URL a caught exception could echo back (verified by Task 5's
+    // ApiKey_IsSentAsHeader_NeverAsQueryString test) — so this is defense-in-depth for a future
+    // change to ArrClient/SeerrClient that surfaces raw HTTP exception text here. Resolved via
+    // the static Plugin.Instance singleton (the same mechanism ServiceRegistrator already uses
+    // to reach configuration/KeyProtector) rather than adding constructor parameters, since
+    // DeleteOrchestrator has no other need for plugin configuration. Plugin.Instance is null in
+    // unit tests (the real Plugin/BasePlugin is never constructed there), which this tolerates.
+    private static string[] GetKnownSecrets()
+    {
+        var plugin = Plugin.Instance;
+        if (plugin?.Configuration == null)
+        {
+            return Array.Empty<string>();
+        }
+
+        var config = plugin.Configuration;
+        var keys = new[]
+        {
+            plugin.KeyProtector.Unprotect(config.RadarrApiKeyEncrypted),
+            plugin.KeyProtector.Unprotect(config.SonarrApiKeyEncrypted),
+            plugin.KeyProtector.Unprotect(config.SeerrApiKeyEncrypted)
+        };
+
+        return Array.FindAll(keys, key => !string.IsNullOrEmpty(key));
+    }
 }
