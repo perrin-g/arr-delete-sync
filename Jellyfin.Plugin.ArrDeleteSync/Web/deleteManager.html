@@ -167,6 +167,13 @@
         }
 
         function loadTvTab() {
+          // Reset the accordion caches/visibility on every page view, matching the fresh-data
+          // guarantee allSeries already gets below — otherwise stale season/episode data (or
+          // stale expanded state) could survive a navigate-away-and-back even though the
+          // top-level series list itself is re-fetched.
+          seasonsCache = {};
+          episodesCache = {};
+          expandedNodes = {};
           ApiClient.getItems(ApiClient.getCurrentUserId(), {
             IncludeItemTypes: "Series",
             Recursive: true
