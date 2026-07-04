@@ -48,7 +48,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = "deleteManager",
-                EmbeddedResourcePath = string.Format("{0}.Web.deleteManager.html", GetType().Namespace)
+                EmbeddedResourcePath = string.Format("{0}.Web.deleteManager.html", GetType().Namespace),
+                DisplayName = "Delete Manager",
+                EnableInMainMenu = true,
+                MenuSection = "server",
+                MenuIcon = "delete_sweep"
             },
             // Registered separately, keyed by the exact literal string used in
             // deleteManager.html's <script src="deleteManager.js">. Jellyfin's dashboard fetches
