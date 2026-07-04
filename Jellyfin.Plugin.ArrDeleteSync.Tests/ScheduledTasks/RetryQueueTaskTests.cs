@@ -33,7 +33,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(true);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         orchestrator.Verify(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>()), Times.Never);
@@ -50,7 +50,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(false);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         queue.Verify(q => q.RemoveAsync(entry.Id), Times.Once);
@@ -70,10 +70,54 @@ public class RetryQueueTaskTests
         var queue = new Mock<IRetryQueueStore>();
         queue.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<RetryQueueEntry> { entry1, entry2 });
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         orchestrator.Verify(o => o.ProcessRetryEntryAsync(entry2), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_FlagsMaxAttemptsExceeded_AndStopsAutoRetrying_WhenLimitReached()
+    {
+        var entry = MakeDueEntry();
+        entry.AttemptCount = 2; // one more failure hits the limit of 3
+        var orchestrator = new Mock<IDeleteOrchestrator>();
+        orchestrator.Setup(o => o.ProcessRetryEntryAsync(entry)).ReturnsAsync(false);
+        var queue = new Mock<IRetryQueueStore>();
+        queue.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<RetryQueueEntry> { entry });
+        var breaker = new Mock<ICircuitBreaker>();
+        breaker.Setup(b => b.IsTripped).Returns(false);
+
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 3);
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e =>
+            e.Id == entry.Id &&
+            e.AttemptCount == 3 &&
+            e.MaxAttemptsExceeded &&
+            e.NextRetryAtUtc == DateTime.MaxValue)), Times.Once);
+        queue.Verify(q => q.RemoveAsync(It.IsAny<Guid>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_NeverPicksUpEntry_OnceMaxAttemptsExceeded()
+    {
+        // NextRetryAtUtc == DateTime.MaxValue (set once the limit is hit) keeps the entry out of
+        // the "due for retry" filter forever -- this locks in that the existing filter is
+        // sufficient and no separate MaxAttemptsExceeded check is needed in the query itself.
+        var stuckEntry = MakeDueEntry();
+        stuckEntry.MaxAttemptsExceeded = true;
+        stuckEntry.NextRetryAtUtc = DateTime.MaxValue;
+        var orchestrator = new Mock<IDeleteOrchestrator>();
+        var queue = new Mock<IRetryQueueStore>();
+        queue.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<RetryQueueEntry> { stuckEntry });
+        var breaker = new Mock<ICircuitBreaker>();
+        breaker.Setup(b => b.IsTripped).Returns(false);
+
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 3);
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        orchestrator.Verify(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>()), Times.Never);
     }
 
     [Fact]
@@ -87,7 +131,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(false);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         orchestrator.Verify(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>()), Times.Never);

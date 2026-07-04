@@ -18,12 +18,14 @@ public class RetryQueueTask : IScheduledTask
     private readonly IDeleteOrchestrator _orchestrator;
     private readonly IRetryQueueStore _retryQueueStore;
     private readonly ICircuitBreaker _circuitBreaker;
+    private readonly int _maxAttempts;
 
-    public RetryQueueTask(IDeleteOrchestrator orchestrator, IRetryQueueStore retryQueueStore, ICircuitBreaker circuitBreaker)
+    public RetryQueueTask(IDeleteOrchestrator orchestrator, IRetryQueueStore retryQueueStore, ICircuitBreaker circuitBreaker, int maxAttempts)
     {
         _orchestrator = orchestrator;
         _retryQueueStore = retryQueueStore;
         _circuitBreaker = circuitBreaker;
+        _maxAttempts = maxAttempts;
     }
 
     public string Name => "Process ArrDeleteSync retry queue";
@@ -67,8 +69,7 @@ public class RetryQueueTask : IScheduledTask
                 }
                 else
                 {
-                    entry.AttemptCount++;
-                    entry.NextRetryAtUtc = DateTime.UtcNow.AddMinutes(Math.Pow(2, entry.AttemptCount) * 5);
+                    RetryBackoffCalculator.RecordFailedAttempt(entry, _maxAttempts);
                     await _retryQueueStore.UpsertAsync(entry);
                 }
             }

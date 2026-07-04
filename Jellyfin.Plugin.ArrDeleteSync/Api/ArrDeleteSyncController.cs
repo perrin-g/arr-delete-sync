@@ -70,8 +70,8 @@ public class ArrDeleteSyncController : ControllerBase
         }
         else
         {
-            entry.AttemptCount++;
-            entry.NextRetryAtUtc = DateTime.UtcNow.AddMinutes(Math.Pow(2, entry.AttemptCount) * 5);
+            var maxAttempts = Plugin.Instance?.Configuration.RetryMaxAttempts ?? 5;
+            RetryBackoffCalculator.RecordFailedAttempt(entry, maxAttempts);
             await _retryQueueStore.UpsertAsync(entry);
         }
 

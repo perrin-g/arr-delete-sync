@@ -523,7 +523,8 @@
             list.innerHTML = "";
             entries.forEach(function (entry) {
               var row = document.createElement("div");
-              row.textContent = entry.JellyfinItemId + " — attempts: " + entry.AttemptCount + " — last error: " + (entry.LastError || "");
+              row.textContent = entry.JellyfinItemId + " — attempts: " + entry.AttemptCount + " — last error: " + (entry.LastError || "") +
+                (entry.MaxAttemptsExceeded ? " — MAX RETRY ATTEMPTS EXCEEDED, manual action required" : "");
               var retryBtn = document.createElement("button");
               retryBtn.setAttribute("is", "emby-button");
               retryBtn.className = "raised";

@@ -16,4 +16,5 @@ public class RetryQueueEntry
     public string? LastError { get; set; }
     public required DateTime NextRetryAtUtc { get; set; }
     public bool IsStructuralFailure { get; set; }
+    public bool MaxAttemptsExceeded { get; set; }
 }

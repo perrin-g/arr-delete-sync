@@ -75,7 +75,14 @@ public class ServiceRegistrator : IPluginServiceRegistrator
         // Registering as IScheduledTask is what makes Jellyfin's TaskManager discover and run
         // this on its own schedule — without this line, RetryQueueTask exists as a compilable
         // class but is never actually invoked by the real Jellyfin host.
-        serviceCollection.AddSingleton<IScheduledTask, ScheduledTasks.RetryQueueTask>();
+        serviceCollection.AddSingleton<IScheduledTask>(provider =>
+        {
+            var orchestrator = provider.GetRequiredService<IDeleteOrchestrator>();
+            var retryQueueStore = provider.GetRequiredService<IRetryQueueStore>();
+            var circuitBreaker = provider.GetRequiredService<ICircuitBreaker>();
+            var maxAttempts = Plugin.Instance!.Configuration.RetryMaxAttempts;
+            return new ScheduledTasks.RetryQueueTask(orchestrator, retryQueueStore, circuitBreaker, maxAttempts);
+        });
     }
 
     // Small private implementation of the seam — deliberately not exposed outside this file

@@ -111,6 +111,32 @@ public class ArrDeleteSyncControllerTests
     }
 
     [Fact]
+    public async Task RetryEntry_FlagsMaxAttemptsExceeded_WhenFallbackLimitReached()
+    {
+        // Plugin.Instance is null in this test host, so the controller falls back to its
+        // documented default of 5 -- AttemptCount=4 means this failure is the 5th.
+        var entryId = Guid.NewGuid();
+        var controller = MakeController(out var orchestrator, out var queue, out _, out _);
+        queue.Setup(q => q.GetAllAsync()).ReturnsAsync(new[] { new RetryQueueEntry
+        {
+            Id = entryId, JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie,
+            ArrDeleteStatus = DeleteStepStatus.Succeeded, JellyfinCleanupStatus = DeleteStepStatus.Failed,
+            AttemptCount = 4,
+            NextRetryAtUtc = DateTime.UtcNow
+        }});
+        orchestrator.Setup(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>())).ReturnsAsync(false);
+
+        var result = await controller.RetryEntry(entryId);
+
+        Assert.IsType<OkObjectResult>(result);
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e =>
+            e.Id == entryId &&
+            e.AttemptCount == 5 &&
+            e.MaxAttemptsExceeded &&
+            e.NextRetryAtUtc == DateTime.MaxValue)), Times.Once);
+    }
+
+    [Fact]
     public async Task ResetCircuitBreaker_CallsReset()
     {
         var controller = MakeController(out _, out _, out _, out var breaker);
