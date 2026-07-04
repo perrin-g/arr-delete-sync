@@ -73,6 +73,10 @@
         var allSeries = [];
         var currentTab = "movies"; // "movies" | "tv"
 
+        var seasonsCache = {}; // Jellyfin series Id -> array of season items (fetched once, kept forever)
+        var episodesCache = {}; // Jellyfin season Id -> array of episode items (fetched once, kept forever)
+        var expandedNodes = {}; // Jellyfin series/season Id -> true if currently expanded (visibility only)
+
         function updateSelectionBar() {
           var count = Object.keys(selectedItems).length;
           var bar = document.getElementById("SelectionBar");
@@ -180,9 +184,84 @@
           var filter = (filterText || "").toLowerCase();
           allSeries
             .filter(function (item) { return item.Name.toLowerCase().indexOf(filter) !== -1; })
-            .forEach(function (item) {
-              list.appendChild(makeCheckboxRow(item, "Series", []));
+            .forEach(function (series) {
+              list.appendChild(makeSeriesRow(series));
+              if (expandedNodes[series.Id] && seasonsCache[series.Id]) {
+                seasonsCache[series.Id].forEach(function (season) {
+                  list.appendChild(makeSeasonRow(season, series.Id));
+                  if (expandedNodes[season.Id] && episodesCache[season.Id]) {
+                    episodesCache[season.Id].forEach(function (episode) {
+                      list.appendChild(makeEpisodeRow(episode, series.Id, season.Id));
+                    });
+                  }
+                });
+              }
             });
+        }
+
+        function makeSeriesRow(series) {
+          var row = makeCheckboxRow(series, "Series", []);
+          var expandBtn = document.createElement("button");
+          expandBtn.textContent = expandedNodes[series.Id] ? "▾" : "▸";
+          expandBtn.onclick = function () {
+            if (expandedNodes[series.Id]) {
+              expandedNodes[series.Id] = false;
+              renderTvList(document.getElementById("TvFilter").value);
+            } else if (seasonsCache[series.Id]) {
+              expandedNodes[series.Id] = true;
+              renderTvList(document.getElementById("TvFilter").value);
+            } else {
+              ApiClient.ajax({
+                type: "GET",
+                url: ApiClient.getUrl("Shows/" + series.Id + "/Seasons"),
+                dataType: "json"
+              }).then(function (result) {
+                seasonsCache[series.Id] = (result && result.Items) || [];
+                expandedNodes[series.Id] = true;
+                renderTvList(document.getElementById("TvFilter").value);
+              }).catch(function (err) {
+                Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+              });
+            }
+          };
+          row.insertBefore(expandBtn, row.firstChild);
+          return row;
+        }
+
+        function makeSeasonRow(season, seriesId) {
+          var row = makeCheckboxRow(season, "Season", [seriesId]);
+          var expandBtn = document.createElement("button");
+          expandBtn.textContent = expandedNodes[season.Id] ? "▾" : "▸";
+          expandBtn.onclick = function () {
+            if (expandedNodes[season.Id]) {
+              expandedNodes[season.Id] = false;
+              renderTvList(document.getElementById("TvFilter").value);
+            } else if (episodesCache[season.Id]) {
+              expandedNodes[season.Id] = true;
+              renderTvList(document.getElementById("TvFilter").value);
+            } else {
+              ApiClient.ajax({
+                type: "GET",
+                url: ApiClient.getUrl("Shows/" + seriesId + "/Episodes", { seasonId: season.Id }),
+                dataType: "json"
+              }).then(function (result) {
+                episodesCache[season.Id] = (result && result.Items) || [];
+                expandedNodes[season.Id] = true;
+                renderTvList(document.getElementById("TvFilter").value);
+              }).catch(function (err) {
+                Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+              });
+            }
+          };
+          row.insertBefore(expandBtn, row.firstChild);
+          row.style.marginLeft = "1.5em";
+          return row;
+        }
+
+        function makeEpisodeRow(episode, seriesId, seasonId) {
+          var row = makeCheckboxRow(episode, "Episode", [seriesId, seasonId]);
+          row.style.marginLeft = "3em";
+          return row;
         }
 
         function fetchJson(path, options) {
