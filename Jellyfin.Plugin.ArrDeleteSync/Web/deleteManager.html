@@ -10,18 +10,38 @@
 
         <div class="verticalSection">
           <div style="display:flex;">
-            <button is="emby-button" type="button" class="raised" id="MoviesTabButton">Movies</button>
+            <button is="emby-button" type="button" class="raised button-submit" id="MoviesTabButton">Movies</button>
             <button is="emby-button" type="button" class="raised" id="TvTabButton">TV</button>
           </div>
 
           <div id="MoviesTab">
             <input is="emby-input" type="text" id="MoviesFilter" label="Filter movies" />
             <div id="MoviesList"></div>
+            <div style="display:flex; align-items:center; gap:1em; margin-top:0.5em;">
+              <button is="emby-button" type="button" class="raised" id="MoviesPrevPage">Prev</button>
+              <span id="MoviesPageLabel"></span>
+              <button is="emby-button" type="button" class="raised" id="MoviesNextPage">Next</button>
+              <select is="emby-select" id="MoviesPageSize" label="Per page">
+                <option value="25">25 per page</option>
+                <option value="50">50 per page</option>
+                <option value="100">100 per page</option>
+              </select>
+            </div>
           </div>
 
           <div id="TvTab" style="display:none">
             <input is="emby-input" type="text" id="TvFilter" label="Filter series" />
             <div id="TvList"></div>
+            <div style="display:flex; align-items:center; gap:1em; margin-top:0.5em;">
+              <button is="emby-button" type="button" class="raised" id="TvPrevPage">Prev</button>
+              <span id="TvPageLabel"></span>
+              <button is="emby-button" type="button" class="raised" id="TvNextPage">Next</button>
+              <select is="emby-select" id="TvPageSize" label="Per page">
+                <option value="25">25 per page</option>
+                <option value="50">50 per page</option>
+                <option value="100">100 per page</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -75,6 +95,18 @@
         var allMovies = [];
         var allSeries = [];
         var currentTab = "movies"; // "movies" | "tv"
+
+        var moviesPage = 1;
+        var moviesPageSize = 25;
+        var tvPage = 1;
+        var tvPageSize = 25;
+
+        function renderPaginationControls(prefix, page, pageSize, totalItems) {
+          var totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+          document.getElementById(prefix + "PageLabel").textContent = "Page " + page + " of " + totalPages + " (" + totalItems + " total)";
+          document.getElementById(prefix + "PrevPage").disabled = page <= 1;
+          document.getElementById(prefix + "NextPage").disabled = page >= totalPages;
+        }
 
         var seasonsCache = {}; // Jellyfin series Id -> array of season items (fetched once, kept forever)
         var episodesCache = {}; // Jellyfin season Id -> array of episode items (fetched once, kept forever)
@@ -147,6 +179,7 @@
         }
 
         function loadMoviesTab() {
+          moviesPage = 1;
           ApiClient.getItems(ApiClient.getCurrentUserId(), {
             IncludeItemTypes: "Movie",
             Recursive: true
@@ -163,11 +196,14 @@
           var list = document.getElementById("MoviesList");
           list.innerHTML = "";
           var filter = (filterText || "").toLowerCase();
-          allMovies
-            .filter(function (item) { return item.Name.toLowerCase().indexOf(filter) !== -1; })
-            .forEach(function (item) {
-              list.appendChild(makeCheckboxRow(item, "Movie", []));
-            });
+          var filtered = allMovies.filter(function (item) { return item.Name.toLowerCase().indexOf(filter) !== -1; });
+          var totalPages = Math.max(1, Math.ceil(filtered.length / moviesPageSize));
+          moviesPage = Math.min(Math.max(moviesPage, 1), totalPages);
+          var start = (moviesPage - 1) * moviesPageSize;
+          filtered.slice(start, start + moviesPageSize).forEach(function (item) {
+            list.appendChild(makeCheckboxRow(item, "Movie", []));
+          });
+          renderPaginationControls("Movies", moviesPage, moviesPageSize, filtered.length);
         }
 
         function loadTvTab() {
@@ -178,6 +214,7 @@
           seasonsCache = {};
           episodesCache = {};
           expandedNodes = {};
+          tvPage = 1;
           ApiClient.getItems(ApiClient.getCurrentUserId(), {
             IncludeItemTypes: "Series",
             Recursive: true
@@ -190,25 +227,31 @@
           });
         }
 
+        // Pagination applies to top-level series only — an expanded series' seasons/episodes
+        // always render in full underneath it, regardless of page size, since they're not
+        // separately counted/paged items.
         function renderTvList(filterText) {
           var list = document.getElementById("TvList");
           list.innerHTML = "";
           var filter = (filterText || "").toLowerCase();
-          allSeries
-            .filter(function (item) { return item.Name.toLowerCase().indexOf(filter) !== -1; })
-            .forEach(function (series) {
-              list.appendChild(makeSeriesRow(series));
-              if (expandedNodes[series.Id] && seasonsCache[series.Id]) {
-                seasonsCache[series.Id].forEach(function (season) {
-                  list.appendChild(makeSeasonRow(season, series.Id));
-                  if (expandedNodes[season.Id] && episodesCache[season.Id]) {
-                    episodesCache[season.Id].forEach(function (episode) {
-                      list.appendChild(makeEpisodeRow(episode, series.Id, season.Id));
-                    });
-                  }
-                });
-              }
-            });
+          var filtered = allSeries.filter(function (item) { return item.Name.toLowerCase().indexOf(filter) !== -1; });
+          var totalPages = Math.max(1, Math.ceil(filtered.length / tvPageSize));
+          tvPage = Math.min(Math.max(tvPage, 1), totalPages);
+          var start = (tvPage - 1) * tvPageSize;
+          filtered.slice(start, start + tvPageSize).forEach(function (series) {
+            list.appendChild(makeSeriesRow(series));
+            if (expandedNodes[series.Id] && seasonsCache[series.Id]) {
+              seasonsCache[series.Id].forEach(function (season) {
+                list.appendChild(makeSeasonRow(season, series.Id));
+                if (expandedNodes[season.Id] && episodesCache[season.Id]) {
+                  episodesCache[season.Id].forEach(function (episode) {
+                    list.appendChild(makeEpisodeRow(episode, series.Id, season.Id));
+                  });
+                }
+              });
+            }
+          });
+          renderPaginationControls("Tv", tvPage, tvPageSize, filtered.length);
         }
 
         function makeSeriesRow(series) {
@@ -537,10 +580,25 @@
 
         document.addEventListener("input", function (e) {
           if (e.target.id === "MoviesFilter") {
+            moviesPage = 1;
             renderMoviesList(e.target.value);
           }
           if (e.target.id === "TvFilter") {
+            tvPage = 1;
             renderTvList(e.target.value);
+          }
+        });
+
+        document.addEventListener("change", function (e) {
+          if (e.target.id === "MoviesPageSize") {
+            moviesPageSize = parseInt(e.target.value, 10);
+            moviesPage = 1;
+            renderMoviesList(document.getElementById("MoviesFilter").value);
+          }
+          if (e.target.id === "TvPageSize") {
+            tvPageSize = parseInt(e.target.value, 10);
+            tvPage = 1;
+            renderTvList(document.getElementById("TvFilter").value);
           }
         });
 
@@ -549,11 +607,31 @@
             currentTab = "movies";
             document.getElementById("MoviesTab").style.display = "block";
             document.getElementById("TvTab").style.display = "none";
+            document.getElementById("MoviesTabButton").className = "raised button-submit";
+            document.getElementById("TvTabButton").className = "raised";
           }
           if (e.target.id === "TvTabButton") {
             currentTab = "tv";
             document.getElementById("MoviesTab").style.display = "none";
             document.getElementById("TvTab").style.display = "block";
+            document.getElementById("TvTabButton").className = "raised button-submit";
+            document.getElementById("MoviesTabButton").className = "raised";
+          }
+          if (e.target.id === "MoviesPrevPage") {
+            moviesPage--;
+            renderMoviesList(document.getElementById("MoviesFilter").value);
+          }
+          if (e.target.id === "MoviesNextPage") {
+            moviesPage++;
+            renderMoviesList(document.getElementById("MoviesFilter").value);
+          }
+          if (e.target.id === "TvPrevPage") {
+            tvPage--;
+            renderTvList(document.getElementById("TvFilter").value);
+          }
+          if (e.target.id === "TvNextPage") {
+            tvPage++;
+            renderTvList(document.getElementById("TvFilter").value);
           }
           if (e.target.id === "DeleteSelectedButton") {
             openBulkConfirm();
