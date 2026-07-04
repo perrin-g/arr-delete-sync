@@ -304,6 +304,13 @@
               }
             }).catch(function (err) {
               Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+              // Dropped from the batch — no resolution object to classify it with, so it goes
+              // into neither safeItems nor needsConfirmationItems. Still counts toward
+              // resolvedCount so a single failure can't hang the rest of the batch forever.
+              resolvedCount++;
+              if (resolvedCount === items.length) {
+                renderBulkConfirm(safeItems, needsConfirmationItems);
+              }
             });
           });
         }
