@@ -72,6 +72,13 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             return new SeerrClient(httpClient, config.SeerrUrl, key);
         });
         serviceCollection.AddSingleton<IDeleteOrchestrator, DeleteOrchestrator>();
+        // RetryQueueTask needs the configured attempt limit, but Jellyfin's host independently
+        // tries to construct every IScheduledTask implementation via its own DI activator (in
+        // addition to -- not instead of -- the factory registration below), and a bare `int`
+        // constructor parameter isn't resolvable that way ("Unable to resolve service for type
+        // 'System.Int32'", confirmed on live startup). Registering it as its own service lets
+        // both construction paths resolve it.
+        serviceCollection.AddSingleton(provider => new RetryPolicyOptions { MaxAttempts = Plugin.Instance!.Configuration.RetryMaxAttempts });
         // Registering as IScheduledTask is what makes Jellyfin's TaskManager discover and run
         // this on its own schedule — without this line, RetryQueueTask exists as a compilable
         // class but is never actually invoked by the real Jellyfin host.
@@ -80,8 +87,8 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             var orchestrator = provider.GetRequiredService<IDeleteOrchestrator>();
             var retryQueueStore = provider.GetRequiredService<IRetryQueueStore>();
             var circuitBreaker = provider.GetRequiredService<ICircuitBreaker>();
-            var maxAttempts = Plugin.Instance!.Configuration.RetryMaxAttempts;
-            return new ScheduledTasks.RetryQueueTask(orchestrator, retryQueueStore, circuitBreaker, maxAttempts);
+            var retryPolicy = provider.GetRequiredService<RetryPolicyOptions>();
+            return new ScheduledTasks.RetryQueueTask(orchestrator, retryQueueStore, circuitBreaker, retryPolicy);
         });
     }
 

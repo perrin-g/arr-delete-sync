@@ -33,7 +33,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(true);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, new RetryPolicyOptions { MaxAttempts = 5 });
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         orchestrator.Verify(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>()), Times.Never);
@@ -50,7 +50,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(false);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, new RetryPolicyOptions { MaxAttempts = 5 });
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         queue.Verify(q => q.RemoveAsync(entry.Id), Times.Once);
@@ -70,7 +70,7 @@ public class RetryQueueTaskTests
         var queue = new Mock<IRetryQueueStore>();
         queue.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<RetryQueueEntry> { entry1, entry2 });
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, new RetryPolicyOptions { MaxAttempts = 5 });
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         orchestrator.Verify(o => o.ProcessRetryEntryAsync(entry2), Times.Never);
@@ -88,7 +88,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(false);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 3);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, new RetryPolicyOptions { MaxAttempts = 3 });
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e =>
@@ -114,7 +114,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(false);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 3);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, new RetryPolicyOptions { MaxAttempts = 3 });
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         orchestrator.Verify(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>()), Times.Never);
@@ -131,7 +131,7 @@ public class RetryQueueTaskTests
         var breaker = new Mock<ICircuitBreaker>();
         breaker.Setup(b => b.IsTripped).Returns(false);
 
-        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, 5);
+        var task = new RetryQueueTask(orchestrator.Object, queue.Object, breaker.Object, new RetryPolicyOptions { MaxAttempts = 5 });
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         orchestrator.Verify(o => o.ProcessRetryEntryAsync(It.IsAny<RetryQueueEntry>()), Times.Never);
