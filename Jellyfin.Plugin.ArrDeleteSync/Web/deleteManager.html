@@ -9,9 +9,9 @@
         <h1>Delete Manager</h1>
 
         <div class="verticalSection">
-          <div style="display:flex;">
-            <button is="emby-button" type="button" class="raised button-submit" id="MoviesTabButton">Movies</button>
-            <button is="emby-button" type="button" class="raised" id="TvTabButton">TV</button>
+          <div style="display:flex; gap:0.5em;">
+            <button is="emby-button" type="button" class="raised button-submit" id="MoviesTabButton" style="flex:1; font-size:1.2em; padding:0.75em;">Movies</button>
+            <button is="emby-button" type="button" class="raised" id="TvTabButton" style="flex:1; font-size:1.2em; padding:0.75em;">TV</button>
           </div>
 
           <div id="MoviesTab">
@@ -75,6 +75,11 @@
         <div class="verticalSection">
           <h2>Audit Log</h2>
           <div id="AuditLogList"></div>
+          <div style="display:flex; align-items:center; gap:1em; margin-top:0.5em;">
+            <button is="emby-button" type="button" class="raised" id="AuditLogPrevPage">Prev</button>
+            <span id="AuditLogPageLabel"></span>
+            <button is="emby-button" type="button" class="raised" id="AuditLogNextPage">Next</button>
+          </div>
         </div>
       </div>
     </div>
@@ -100,6 +105,9 @@
         var moviesPageSize = 25;
         var tvPage = 1;
         var tvPageSize = 25;
+
+        var auditLogPage = 1;
+        var AUDIT_LOG_PAGE_SIZE = 25; // hard limit, no user-facing size control
 
         function renderPaginationControls(prefix, page, pageSize, totalItems) {
           var totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -555,19 +563,31 @@
           });
         }
 
+        var auditLogEntries = []; // newest-first; re-fetched on refreshAuditLog(), paged client-side
+
         function refreshAuditLog() {
           fetchJson("audit-log").then(function (entries) {
-            var list = document.getElementById("AuditLogList");
-            list.innerHTML = "";
-            entries.slice().reverse().forEach(function (entry) {
-              var row = document.createElement("div");
-              row.textContent = formatTimestamp(entry.TimestampUtc) + " — " + entry.ItemDisplayName + " — " + entry.Action + " — " + entry.Outcome;
-              list.appendChild(row);
-            });
+            auditLogEntries = entries.slice().reverse();
+            auditLogPage = 1; // a fresh fetch (e.g. right after a delete) should surface the newest entries
+            renderAuditLogPage();
           }).catch(function (err) {
             console.error(err);
             Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
           });
+        }
+
+        function renderAuditLogPage() {
+          var list = document.getElementById("AuditLogList");
+          list.innerHTML = "";
+          var totalPages = Math.max(1, Math.ceil(auditLogEntries.length / AUDIT_LOG_PAGE_SIZE));
+          auditLogPage = Math.min(Math.max(auditLogPage, 1), totalPages);
+          var start = (auditLogPage - 1) * AUDIT_LOG_PAGE_SIZE;
+          auditLogEntries.slice(start, start + AUDIT_LOG_PAGE_SIZE).forEach(function (entry) {
+            var row = document.createElement("div");
+            row.textContent = formatTimestamp(entry.TimestampUtc) + " — " + entry.ItemDisplayName + " — " + entry.Action + " — " + entry.Outcome;
+            list.appendChild(row);
+          });
+          renderPaginationControls("AuditLog", auditLogPage, AUDIT_LOG_PAGE_SIZE, auditLogEntries.length);
         }
 
         document.addEventListener("pageshow", function (e) {
@@ -632,6 +652,14 @@
           if (e.target.id === "TvNextPage") {
             tvPage++;
             renderTvList(document.getElementById("TvFilter").value);
+          }
+          if (e.target.id === "AuditLogPrevPage") {
+            auditLogPage--;
+            renderAuditLogPage();
+          }
+          if (e.target.id === "AuditLogNextPage") {
+            auditLogPage++;
+            renderAuditLogPage();
           }
           if (e.target.id === "DeleteSelectedButton") {
             openBulkConfirm();
