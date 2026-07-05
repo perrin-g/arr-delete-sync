@@ -16,4 +16,10 @@ public class DeleteOutcome
     public string? BlockedReason { get; set; }
     public bool RequiresManualFileCleanup { get; set; } // true for untracked content: file remains on disk
     public string? FilePath { get; set; } // populated when RequiresManualFileCleanup is true
+    // True only when THIS call's own failure is what just tripped the breaker (not when it was
+    // already tripped beforehand -- that case returns BlockedReason instead, before any of this
+    // item's own resolution/delete logic even runs). Without this, a failure that crosses the
+    // threshold reports itself identically to any other ordinary failure, and nothing reveals
+    // the trip until a separate, later attempt happens to get blocked.
+    public bool CircuitBreakerTripped { get; set; }
 }

@@ -175,6 +175,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
 
         if (resolution.State == ArrTrackingState.Indeterminate)
         {
+            const string indeterminateError = "Could not verify arr status; queued for retry";
             var pendingEntry = new RetryQueueEntry
             {
                 Id = Guid.NewGuid(),
@@ -186,12 +187,13 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 ArrDeleteStatus = DeleteStepStatus.Pending,
                 JellyfinCleanupStatus = DeleteStepStatus.Pending,
                 SeerrUpdateStatus = DeleteStepStatus.Pending,
+                LastError = indeterminateError,
                 NextRetryAtUtc = DateTime.UtcNow.AddMinutes(5)
             };
             await _retryQueueStore.UpsertAsync(pendingEntry);
             _circuitBreaker.RecordFailure();
-            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", "Could not verify arr status; queued for retry", false, null);
-            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = true };
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", indeterminateError, false, null);
+            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = true, CircuitBreakerTripped = _circuitBreaker.IsTripped };
         }
 
         // Tracked content: *arr owns the actual file + record deletion (deleteFiles=true) — the
@@ -205,6 +207,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
 
             if (!arrDeleted)
             {
+                const string arrDeleteError = "arr delete call failed";
                 var entry = new RetryQueueEntry
                 {
                     Id = Guid.NewGuid(),
@@ -214,12 +217,13 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                     ProviderIdType = resolution.ProviderIdType,
                     ProviderIdValue = resolution.ProviderIdValue,
                     ArrDeleteStatus = DeleteStepStatus.Failed,
+                    LastError = arrDeleteError,
                     NextRetryAtUtc = DateTime.UtcNow.AddMinutes(5)
                 };
                 await _retryQueueStore.UpsertAsync(entry);
                 _circuitBreaker.RecordFailure();
-                await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", "arr delete call failed", false, null);
-                return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = true };
+                await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", arrDeleteError, false, null);
+                return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = true, CircuitBreakerTripped = _circuitBreaker.IsTripped };
             }
         }
 
@@ -261,7 +265,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             await _retryQueueStore.UpsertAsync(entry);
             _circuitBreaker.RecordFailure();
             await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", isStructural ? "Failed" : "Partial", entry.LastError, requiresManualFileCleanup, filePath);
-            return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = !isStructural, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath };
+            return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = false, SeerrUpdated = false, QueuedForRetry = !isStructural, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath, CircuitBreakerTripped = _circuitBreaker.IsTripped };
         }
 
         bool seerrUpdated = true;
@@ -272,6 +276,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
 
         if (!seerrUpdated)
         {
+            const string seerrError = "Seerr update failed";
             var entry = new RetryQueueEntry
             {
                 Id = Guid.NewGuid(),
@@ -283,12 +288,13 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 ArrDeleteStatus = DeleteStepStatus.Succeeded,
                 JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
                 SeerrUpdateStatus = DeleteStepStatus.Failed,
+                LastError = seerrError,
                 NextRetryAtUtc = DateTime.UtcNow.AddMinutes(5)
             };
             await _retryQueueStore.UpsertAsync(entry);
             _circuitBreaker.RecordFailure();
-            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", "Seerr update failed", requiresManualFileCleanup, filePath);
-            return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = true, SeerrUpdated = false, QueuedForRetry = true, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath };
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", seerrError, requiresManualFileCleanup, filePath);
+            return new DeleteOutcome { ArrDeleted = arrDeleted, JellyfinCleanedUp = true, SeerrUpdated = false, QueuedForRetry = true, RequiresManualFileCleanup = requiresManualFileCleanup, FilePath = filePath, CircuitBreakerTripped = _circuitBreaker.IsTripped };
         }
 
         await LogAsync(request.JellyfinItemId, itemName, request.Granularity, request.Force ? "Forced" : (isUntracked ? "JellyfinCatalogOnly" : "SyncedDelete"), "Success", null, requiresManualFileCleanup, filePath);

@@ -35,6 +35,7 @@ public class ArrDeleteSyncControllerTests
     [InlineData(nameof(ArrDeleteSyncController.DismissEntry))]
     [InlineData(nameof(ArrDeleteSyncController.GetAuditLog))]
     [InlineData(nameof(ArrDeleteSyncController.ResetCircuitBreaker))]
+    [InlineData(nameof(ArrDeleteSyncController.GetCircuitBreakerStatus))]
     public void EveryAction_RequiresAdminAuthorization(string methodName)
     {
         var method = typeof(ArrDeleteSyncController).GetMethod(methodName);
@@ -150,5 +151,25 @@ public class ArrDeleteSyncControllerTests
 
         Assert.IsType<OkResult>(result);
         breaker.Verify(b => b.Reset(), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GetCircuitBreakerStatus_ReturnsCurrentIsTrippedValue(bool isTripped)
+    {
+        // Regression coverage: the Delete Manager UI only ever learned the breaker was tripped
+        // reactively (from a delete attempt's own BlockedReason), never by checking current
+        // state -- reported live as needing a manual page refresh after an admin reset the
+        // breaker in Settings, since nothing on the Delete Manager page re-queried it.
+        var controller = MakeController(out _, out _, out _, out var breaker);
+        breaker.Setup(b => b.IsTripped).Returns(isTripped);
+
+        var result = controller.GetCircuitBreakerStatus();
+
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var isTrippedProperty = okResult.Value!.GetType().GetProperty("IsTripped");
+        Assert.NotNull(isTrippedProperty);
+        Assert.Equal(isTripped, isTrippedProperty.GetValue(okResult.Value));
     }
 }

@@ -107,7 +107,9 @@ public class DeleteOrchestratorExecuteTests
         Assert.False(outcome.JellyfinCleanedUp);
         accessor.Verify(a => a.DeleteItem(It.IsAny<Guid>(), out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny), Times.Never);
         seerr.Verify(s => s.UpdateAvailabilityAsync(It.IsAny<int>()), Times.Never);
-        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Failed && e.ItemDisplayName == "Test Movie")), Times.Once);
+        // Regression test: RetryQueueEntry.LastError was never set on this path -- the Retry
+        // Queue UI showed a blank "last error:" for every arr-delete failure, reproduced live.
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Failed && e.ItemDisplayName == "Test Movie" && e.LastError == "arr delete call failed")), Times.Once);
         breaker.Verify(b => b.RecordFailure(), Times.Once);
     }
 
@@ -165,11 +167,14 @@ public class DeleteOrchestratorExecuteTests
         Assert.True(outcome.JellyfinCleanedUp);
         Assert.False(outcome.SeerrUpdated);
         Assert.True(outcome.QueuedForRetry);
+        // Regression test: RetryQueueEntry.LastError was never set on this path -- reproduced
+        // live, showing a blank "last error:" for every Seerr-sync failure.
         queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e =>
             e.ArrDeleteStatus == DeleteStepStatus.Succeeded &&
             e.JellyfinCleanupStatus == DeleteStepStatus.Succeeded &&
             e.SeerrUpdateStatus == DeleteStepStatus.Failed &&
-            e.ItemDisplayName == "Test Movie")), Times.Once);
+            e.ItemDisplayName == "Test Movie" &&
+            e.LastError == "Seerr update failed")), Times.Once);
     }
 
     [Fact]
@@ -190,7 +195,34 @@ public class DeleteOrchestratorExecuteTests
         Assert.True(outcome.QueuedForRetry);
         arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
         accessor.Verify(a => a.DeleteItem(It.IsAny<Guid>(), out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny), Times.Never);
-        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Pending && e.ItemDisplayName == "Test Movie")), Times.Once);
+        // Regression test: RetryQueueEntry.LastError was never set on this path -- reproduced
+        // live via a Series delete against a stopped Sonarr, showing a blank "last error:".
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.ArrDeleteStatus == DeleteStepStatus.Pending && e.ItemDisplayName == "Test Movie" && e.LastError == "Could not verify arr status; queued for retry")), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_ReportsCircuitBreakerTripped_WhenThisFailureIsWhatCrossesTheThreshold()
+    {
+        // Regression test: a failure that itself trips the breaker used to report itself
+        // identically to any other ordinary "Queued for retry" failure -- reproduced live with a
+        // Series delete (each needing its own individually-submitted typed confirmation, unlike
+        // a bulk movie batch's automatic next-item), so nothing revealed the trip had happened
+        // until a separate, later attempt happened to get blocked.
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(MakeMovie(itemId));
+        arr.Setup(a => a.FindByProviderIdAsync("tmdbId", "603", false))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Indeterminate });
+        // First read (top-of-method early-exit check) says not tripped yet; second read (after
+        // RecordFailure() runs) says this exact call just tripped it.
+        breaker.SetupSequence(b => b.IsTripped).Returns(false).Returns(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
+
+        Assert.True(outcome.CircuitBreakerTripped);
+        breaker.Verify(b => b.RecordFailure(), Times.Once);
     }
 
     [Fact]

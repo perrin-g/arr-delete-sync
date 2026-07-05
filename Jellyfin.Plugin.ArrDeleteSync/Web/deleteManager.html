@@ -491,26 +491,35 @@
                 force: !item.resolution.HasUsableProviderId
               })
             }).then(function (outcome) {
-              if (outcome.BlockedReason && outcome.BlockedReason.indexOf("Circuit breaker") !== -1) {
-                breakerTripped = true;
-                stoppedByBreaker = true;
-                document.getElementById("BreakerBanner").style.display = "block";
-                rows[item.id].textContent = item.name + ": Blocked — " + outcome.BlockedReason;
-              } else if (outcome.BlockedReason) {
-                rows[item.id].textContent = item.name + ": Blocked — " + outcome.BlockedReason;
+              var text;
+              if (outcome.BlockedReason) {
+                text = item.name + ": Blocked — " + outcome.BlockedReason;
               } else if (outcome.QueuedForRetry) {
-                rows[item.id].textContent = item.name + ": Queued for retry";
+                text = item.name + ": Queued for retry";
               } else if (outcome.JellyfinCleanedUp === false) {
-                rows[item.id].textContent = item.name + ": Cleanup failed — check Audit Log for details";
+                text = item.name + ": Cleanup failed — check Audit Log for details";
               } else {
-                var text = item.name + ": Deleted";
+                text = item.name + ": Deleted";
                 if (outcome.RequiresManualFileCleanup) {
                   text += outcome.FilePath
                     ? " (file NOT deleted — remove manually at: " + outcome.FilePath + ")"
                     : " (file NOT deleted — path unknown, check the library folder manually)";
                 }
-                rows[item.id].textContent = text;
               }
+              // Distinct from outcome.BlockedReason (which only fires when the breaker was
+              // ALREADY tripped before this call even started) -- this is the call whose OWN
+              // failure just crossed the threshold. Without checking it separately, that
+              // specific failure looks identical to any other ordinary "Queued for retry" and
+              // nothing reveals the trip until some later, separate attempt happens to get
+              // blocked (reproduced live with a Series item needing individual typed
+              // confirmation, so there was no automatic "next item" to expose it).
+              if (outcome.CircuitBreakerTripped) {
+                breakerTripped = true;
+                stoppedByBreaker = true;
+                document.getElementById("BreakerBanner").style.display = "block";
+                text += " — this failure tripped the circuit breaker; remaining items will be skipped";
+              }
+              rows[item.id].textContent = text;
               index++;
               runNext();
             }).catch(function (err) {
@@ -536,7 +545,13 @@
               retryBtn.className = "raised";
               retryBtn.textContent = "Retry now";
               retryBtn.onclick = function () {
-                fetchJson("retry-queue/" + entry.Id + "/retry", { type: "POST" }).then(refreshRetryQueue).catch(function (err) {
+                // A manual retry can itself trip the breaker (same underlying RecordFailure()
+                // path as a fresh delete) -- refresh the live status so the banner reflects it
+                // immediately rather than only on the next page visit.
+                fetchJson("retry-queue/" + entry.Id + "/retry", { type: "POST" }).then(function () {
+                  refreshRetryQueue();
+                  refreshBreakerStatus();
+                }).catch(function (err) {
                   console.error(err);
                   Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
                 });
@@ -597,8 +612,23 @@
           renderPaginationControls("AuditLog", auditLogPage, AUDIT_LOG_PAGE_SIZE, auditLogEntries.length);
         }
 
+        // Otherwise breakerTripped only ever gets set reactively, from a delete attempt's own
+        // BlockedReason -- an admin resetting the breaker in Settings (or it being tripped by
+        // someone else entirely) would never be reflected here until a delete was attempted,
+        // and even then only after the fact. Reported live: needing a manual page refresh for
+        // the banner to clear after a Settings-page reset.
+        function refreshBreakerStatus() {
+          fetchJson("circuit-breaker/status").then(function (status) {
+            breakerTripped = !!status.IsTripped;
+            document.getElementById("BreakerBanner").style.display = breakerTripped ? "block" : "none";
+          }).catch(function (err) {
+            console.error(err);
+          });
+        }
+
         document.addEventListener("pageshow", function (e) {
           if (!e.target.id || e.target.id !== "ArrDeleteSyncManagerPage") return;
+          refreshBreakerStatus();
           refreshRetryQueue();
           refreshAuditLog();
           loadMoviesTab();

@@ -120,4 +120,10 @@ public class ArrDeleteSyncController : ControllerBase
         _circuitBreaker.Reset();
         return Task.FromResult<ActionResult>(Ok());
     }
+
+    [HttpGet("circuit-breaker/status")]
+    public ActionResult GetCircuitBreakerStatus()
+    {
+        return Ok(new { IsTripped = _circuitBreaker.IsTripped });
+    }
 }
