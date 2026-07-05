@@ -36,7 +36,7 @@
             <input is="emby-input" type="number" id="AuditLogRetentionDays" label="Audit log retention (days)" />
             <button is="emby-button" type="button" class="raised" id="ResetBreaker">Reset circuit breaker</button>
           </div>
-          <button is="emby-button" type="submit" class="raised button-submit block">
+          <button is="emby-button" type="submit" class="raised block" id="SaveButton">
             <span>Save</span>
           </button>
         </form>
@@ -53,6 +53,15 @@
       (function () {
         var pluginId = "8f2c1e4a-6b3d-4a9e-9c1a-1a2b3c4d5e6f";
 
+        // Fields whose changes should mark the form dirty (Save needs highlighting) -- the
+        // Test Connection / Reset circuit breaker buttons act immediately on their own and
+        // aren't part of this list.
+        var DIRTY_TRACKED_FIELDS = ["RadarrUrl", "RadarrApiKey", "SonarrUrl", "SonarrApiKey", "SeerrUrl", "SeerrApiKey", "RetryMaxAttempts", "CircuitBreakerThreshold", "AuditLogRetentionDays"];
+
+        function setDirty(isDirty) {
+          document.getElementById("SaveButton").className = isDirty ? "raised button-submit block" : "raised block";
+        }
+
         function loadConfig(page) {
           Dashboard.showLoadingMsg();
           ApiClient.getPluginConfiguration(pluginId).then(function (config) {
@@ -62,6 +71,7 @@
             page.querySelector("#RetryMaxAttempts").value = config.RetryMaxAttempts || 5;
             page.querySelector("#CircuitBreakerThreshold").value = config.CircuitBreakerThreshold || 5;
             page.querySelector("#AuditLogRetentionDays").value = config.AuditLogRetentionDays || 15;
+            setDirty(false);
             Dashboard.hideLoadingMsg();
           });
         }
@@ -100,8 +110,15 @@
 
             ApiClient.updatePluginConfiguration(pluginId, config).then(function () {
               Dashboard.processPluginConfigurationUpdateResult();
+              setDirty(false);
             });
           });
+        });
+
+        document.addEventListener("input", function (e) {
+          if (DIRTY_TRACKED_FIELDS.indexOf(e.target.id) !== -1) {
+            setDirty(true);
+          }
         });
 
         document.addEventListener("click", function (e) {
