@@ -3,6 +3,7 @@
 // policy name used by Jellyfin's own admin-only dashboard endpoints as of 10.11.
 using System;
 using System.Linq;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ArrDeleteSync.Models;
 using Jellyfin.Plugin.ArrDeleteSync.Services;
@@ -20,17 +21,20 @@ public class ArrDeleteSyncController : ControllerBase
     private readonly IRetryQueueStore _retryQueueStore;
     private readonly IAuditLogStore _auditLogStore;
     private readonly ICircuitBreaker _circuitBreaker;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public ArrDeleteSyncController(
         IDeleteOrchestrator orchestrator,
         IRetryQueueStore retryQueueStore,
         IAuditLogStore auditLogStore,
-        ICircuitBreaker circuitBreaker)
+        ICircuitBreaker circuitBreaker,
+        IHttpClientFactory httpClientFactory)
     {
         _orchestrator = orchestrator;
         _retryQueueStore = retryQueueStore;
         _auditLogStore = auditLogStore;
         _circuitBreaker = circuitBreaker;
+        _httpClientFactory = httpClientFactory;
     }
 
     [HttpGet("resolve")]
@@ -105,6 +109,49 @@ public class ArrDeleteSyncController : ControllerBase
         });
 
         return Ok(new { dismissed = true });
+    }
+
+    public record TestConnectionRequest(string Service, string Url, string ApiKey);
+
+    [HttpPost("test")]
+    public async Task<ActionResult> TestConnection([FromBody] TestConnectionRequest body)
+    {
+        string testPath = body.Service?.ToLowerInvariant() switch
+        {
+            "radarr" or "sonarr" => "/api/v3/system/status",
+            "seerr" => "/api/v1/settings/main",
+            _ => null!
+        };
+
+        if (testPath == null)
+            return Ok(new { ok = false, message = "Unknown service." });
+
+        var baseUrl = body.Url?.TrimEnd('/') ?? "";
+        if (string.IsNullOrEmpty(baseUrl))
+            return Ok(new { ok = false, message = "URL is required." });
+
+        if (string.IsNullOrEmpty(body.ApiKey))
+            return Ok(new { ok = false, message = "API key is required." });
+
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient("ArrDeleteSync-Test");
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+            using var request = new HttpRequestMessage(HttpMethod.Get, baseUrl + testPath);
+            request.Headers.Add("X-Api-Key", body.ApiKey);
+            using var response = await httpClient.SendAsync(request);
+            return response.IsSuccessStatusCode
+                ? Ok(new { ok = true, message = $"Connected ({(int)response.StatusCode})" })
+                : Ok(new { ok = false, message = $"HTTP {(int)response.StatusCode}" });
+        }
+        catch (TaskCanceledException)
+        {
+            return Ok(new { ok = false, message = "Connection timed out." });
+        }
+        catch (Exception ex)
+        {
+            return Ok(new { ok = false, message = ex.Message });
+        }
     }
 
     [HttpGet("audit-log")]

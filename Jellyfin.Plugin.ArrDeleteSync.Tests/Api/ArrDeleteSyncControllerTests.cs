@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ArrDeleteSync.Api;
@@ -24,7 +25,8 @@ public class ArrDeleteSyncControllerTests
         queue = new Mock<IRetryQueueStore>();
         audit = new Mock<IAuditLogStore>();
         breaker = new Mock<ICircuitBreaker>();
-        return new ArrDeleteSyncController(orchestrator.Object, queue.Object, audit.Object, breaker.Object);
+        var httpClientFactory = new Mock<IHttpClientFactory>();
+        return new ArrDeleteSyncController(orchestrator.Object, queue.Object, audit.Object, breaker.Object, httpClientFactory.Object);
     }
 
     [Theory]
@@ -36,6 +38,7 @@ public class ArrDeleteSyncControllerTests
     [InlineData(nameof(ArrDeleteSyncController.GetAuditLog))]
     [InlineData(nameof(ArrDeleteSyncController.ResetCircuitBreaker))]
     [InlineData(nameof(ArrDeleteSyncController.GetCircuitBreakerStatus))]
+    [InlineData(nameof(ArrDeleteSyncController.TestConnection))]
     public void EveryAction_RequiresAdminAuthorization(string methodName)
     {
         var method = typeof(ArrDeleteSyncController).GetMethod(methodName);

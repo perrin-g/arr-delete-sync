@@ -121,11 +121,43 @@
           }
         });
 
+        var TEST_BUTTONS = {
+          TestRadarr: { service: "radarr", urlId: "RadarrUrl", keyId: "RadarrApiKey", result: "RadarrTestResult" },
+          TestSonarr: { service: "sonarr", urlId: "SonarrUrl", keyId: "SonarrApiKey", result: "SonarrTestResult" },
+          TestSeerr:  { service: "seerr",  urlId: "SeerrUrl",  keyId: "SeerrApiKey",  result: "SeerrTestResult"  }
+        };
+
         document.addEventListener("click", function (e) {
           if (e.target.id === "ResetBreaker") {
             ApiClient.ajax({ type: "POST", url: ApiClient.getUrl("ArrDeleteSync/circuit-breaker/reset") })
               .then(function () { Dashboard.alert("Circuit breaker reset."); });
+            return;
           }
+
+          var entry = TEST_BUTTONS[e.target.id];
+          if (!entry) return;
+
+          var resultEl = document.getElementById(entry.result);
+          resultEl.textContent = "Testing…";
+          resultEl.style.color = "";
+
+          ApiClient.ajax({
+            type: "POST",
+            url: ApiClient.getUrl("ArrDeleteSync/test"),
+            contentType: "application/json",
+            data: JSON.stringify({
+              service: entry.service,
+              url: document.getElementById(entry.urlId).value,
+              apiKey: document.getElementById(entry.keyId).value
+            }),
+            dataType: "json"
+          }).then(function (result) {
+            resultEl.textContent = result.ok ? "✓ " + result.message : "✗ " + result.message;
+            resultEl.style.color = result.ok ? "var(--color-success, green)" : "var(--color-error, red)";
+          }).catch(function () {
+            resultEl.textContent = "✗ Request failed";
+            resultEl.style.color = "var(--color-error, red)";
+          });
         });
       })();
     </script>
