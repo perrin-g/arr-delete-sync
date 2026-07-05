@@ -97,7 +97,11 @@ Before trusting the plugin with real deletions:
 
 ## UI
 
+Both pages are in the Jellyfin **admin dashboard** (`/web/#/dashboard`), not the user-facing media interface. They appear in the server sidebar under the plugin's menu entries and are only visible to admin accounts.
+
 ### Settings Page
+
+Navigate to **Dashboard → ArrDeleteSync Settings**:
 
 - Configure Radarr, Sonarr, and Seerr connection details
 - Test connections to verify API access
@@ -106,6 +110,8 @@ Before trusting the plugin with real deletions:
 - Clear audit logs (or let them auto-expire after 15 days)
 
 ### Delete Manager
+
+Navigate to **Dashboard → Delete Manager**:
 
 - Manually retry failed deletions
 - Dismiss items from the retry queue (marks as abandoned, logs the action)
@@ -116,6 +122,8 @@ Before trusting the plugin with real deletions:
   - Whether manual file cleanup is required
 
 ### Audit Log
+
+Accessible from the Delete Manager page:
 
 - Complete history of all deletion attempts
 - Search by item name or filter by success/failure
