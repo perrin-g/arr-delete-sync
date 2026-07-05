@@ -35,17 +35,19 @@ If any step fails, the entry is queued for automatic retry.
 
 - Failed deletions are stored in a persistent queue
 - A scheduled task retries queued items every 5 minutes
-- Retry backoff increases exponentially (default starts at 300 seconds)
-- Max 5 retry attempts before giving up
+- Retry backoff increases exponentially, starting at the configured base delay (default: 300 seconds)
+- Retries stop after the configured maximum attempts (default: 5)
 - Manual retry or dismissal available from the Delete Manager UI
+- Both thresholds are configurable in **ArrDeleteSync Settings**
 
 ### Circuit Breaker
 
-If 5 failures occur within 15 minutes:
+If the configured failure threshold is reached within the configured window (defaults: 5 failures / 15 minutes):
 - The circuit breaker **trips** and blocks all deletion attempts
 - Protects against cascading failures (e.g., Radarr down, network issue)
 - Admin must manually reset the breaker from the plugin settings
 - Breaker state survives a Jellyfin restart
+- Threshold and window are configurable in **ArrDeleteSync Settings**
 
 ## Configuration
 
