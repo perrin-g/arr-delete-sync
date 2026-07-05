@@ -78,13 +78,26 @@ Navigate to **Dashboard → Plugins → ArrDeleteSync Settings** to configure:
 
 ## Installation
 
+### Plugin Catalog (Recommended)
+
+1. In Jellyfin, go to **Dashboard → Plugins → Repositories**
+2. Click **+** and add:
+   ```
+   https://raw.githubusercontent.com/perrin-g/arr-delete-sync/main/manifest.json
+   ```
+3. Go to **Dashboard → Plugins → Catalog**, find **ArrDeleteSync**, and click **Install**
+4. Restart Jellyfin when prompted
+5. Go to **ArrDeleteSync Settings** and configure your arr/Seerr URLs and API keys
+
+Future updates will appear in **Dashboard → Plugins** and can be applied in-app.
+
 ### Manual Installation
 
-1. Download the latest release `.dll` file
-2. Copy to your Jellyfin plugins directory:
-   - **Bare metal:** `~/.config/jellyfin/plugins/` or `/opt/jellyfin/plugins/`
-   - **Docker:** Mount the directory as `/config/plugins/` and copy inside
-   - **Other:** Check your Jellyfin data path in Dashboard → About
+1. Download the latest release `.zip` from [GitHub Releases](https://github.com/perrin-g/arr-delete-sync/releases)
+2. Extract and copy `Jellyfin.Plugin.ArrDeleteSync.dll` to your Jellyfin plugins directory:
+   - **Bare metal:** `~/.config/jellyfin/plugins/`
+   - **Docker:** inside the `/config/plugins/` mount
+   - **Other:** check your Jellyfin data path at Dashboard → About
 3. Restart Jellyfin
 4. Navigate to **Dashboard → Plugins** and verify **ArrDeleteSync** appears in the list
 5. Go to **ArrDeleteSync Settings** and configure your arr/Seerr URLs and API keys
