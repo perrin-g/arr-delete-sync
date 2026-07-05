@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Extract version
+        id: version
+        run: |
+          TAG=${GITHUB_REF_NAME#v}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=${TAG}.0" >> $GITHUB_OUTPUT
+
+      - name: Build
+        run: |
+          dotnet publish \
+            Jellyfin.Plugin.ArrDeleteSync/Jellyfin.Plugin.ArrDeleteSync.csproj \
+            -c Release \
+            -o dist \
+            /p:Version=${{ steps.version.outputs.tag }}
+
+      - name: Package
+        run: |
+          cd dist
+          zip ../ArrDeleteSync_${{ steps.version.outputs.version }}.zip Jellyfin.Plugin.ArrDeleteSync.dll
+
+      - name: Compute checksum
+        id: checksum
+        run: |
+          MD5=$(md5sum ArrDeleteSync_${{ steps.version.outputs.version }}.zip | awk '{print $1}')
+          echo "md5=$MD5" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ArrDeleteSync_${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true
+
+      - name: Update manifest.json
+        run: |
+          git fetch origin main
+          git checkout main
+          python3 - <<'EOF'
+          import json, os
+          from datetime import datetime, timezone
+
+          version  = os.environ['VERSION']
+          checksum = os.environ['CHECKSUM']
+          tag      = os.environ['TAG']
+          repo     = os.environ['REPO']
+          ts       = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.0000000Z')
+          url      = f"https://github.com/{repo}/releases/download/v{tag}/ArrDeleteSync_{version}.zip"
+
+          with open('manifest.json') as f:
+              data = json.load(f)
+
+          data[0]['versions'].insert(0, {
+              "checksum": checksum,
+              "changelog": "",
+              "targetAbi": "10.11.0.0",
+              "sourceUrl": url,
+              "timestamp": ts,
+              "version": version
+          })
+
+          with open('manifest.json', 'w') as f:
+              json.dump(data, f, indent=2)
+              f.write('\n')
+          EOF
+        env:
+          VERSION:  ${{ steps.version.outputs.version }}
+          CHECKSUM: ${{ steps.checksum.outputs.md5 }}
+          TAG:      ${{ steps.version.outputs.tag }}
+          REPO:     ${{ github.repository }}
+
+      - name: Commit manifest
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add manifest.json
+          git diff --staged --quiet || git commit -m "chore: update manifest for ${{ github.ref_name }}"
+          git push origin main
