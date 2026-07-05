@@ -140,7 +140,7 @@
           }
         }
 
-        function toggleSelection(item, granularity, ancestorIds) {
+        function toggleSelection(item, granularity, ancestorIds, ancestorNames) {
           if (selectedItems[item.Id]) {
             delete selectedItems[item.Id];
           } else {
@@ -150,7 +150,13 @@
                 delete selectedItems[id];
               }
             });
-            selectedItems[item.Id] = { id: item.Id, name: item.Name, type: item.Type, granularity: granularity, ancestorIds: ancestorIds || [] };
+            // Seasons/episodes only carry their own bare Jellyfin name (e.g. "Season 2"), which
+            // is meaningless once shown outside the accordion's visual nesting (bulk confirm,
+            // results). Qualify it with ancestor names so "Season 2" becomes "The Pitt — Season 2".
+            // Plain hyphen, not an em-dash -- this string has to be retyped exactly into the
+            // needs-confirmation input, and an em-dash isn't reachable on most keyboards.
+            var displayName = (ancestorNames && ancestorNames.length ? ancestorNames.join(" - ") + " - " : "") + item.Name;
+            selectedItems[item.Id] = { id: item.Id, name: displayName, type: item.Type, granularity: granularity, ancestorIds: ancestorIds || [] };
           }
           updateSelectionBar();
           rerenderCurrentTab();
@@ -170,14 +176,14 @@
           });
         }
 
-        function makeCheckboxRow(item, granularity, ancestorIds) {
+        function makeCheckboxRow(item, granularity, ancestorIds, ancestorNames) {
           var row = document.createElement("div");
           var checkbox = document.createElement("input");
           checkbox.type = "checkbox";
           checkbox.checked = !!selectedItems[item.Id];
           checkbox.disabled = isDisabledByAncestor(ancestorIds) || isDisabledByDescendant(item.Id);
           checkbox.onchange = function () {
-            toggleSelection(item, granularity, ancestorIds);
+            toggleSelection(item, granularity, ancestorIds, ancestorNames);
           };
           var label = document.createElement("span");
           label.textContent = " " + item.Name;
@@ -250,10 +256,10 @@
             list.appendChild(makeSeriesRow(series));
             if (expandedNodes[series.Id] && seasonsCache[series.Id]) {
               seasonsCache[series.Id].forEach(function (season) {
-                list.appendChild(makeSeasonRow(season, series.Id));
+                list.appendChild(makeSeasonRow(season, series.Id, series.Name));
                 if (expandedNodes[season.Id] && episodesCache[season.Id]) {
                   episodesCache[season.Id].forEach(function (episode) {
-                    list.appendChild(makeEpisodeRow(episode, series.Id, season.Id));
+                    list.appendChild(makeEpisodeRow(episode, series.Id, season.Id, series.Name, season.Name));
                   });
                 }
               });
@@ -292,8 +298,8 @@
           return row;
         }
 
-        function makeSeasonRow(season, seriesId) {
-          var row = makeCheckboxRow(season, "Season", [seriesId]);
+        function makeSeasonRow(season, seriesId, seriesName) {
+          var row = makeCheckboxRow(season, "Season", [seriesId], [seriesName]);
           var expandBtn = document.createElement("button");
           expandBtn.textContent = expandedNodes[season.Id] ? "▾" : "▸";
           expandBtn.onclick = function () {
@@ -323,8 +329,8 @@
           return row;
         }
 
-        function makeEpisodeRow(episode, seriesId, seasonId) {
-          var row = makeCheckboxRow(episode, "Episode", [seriesId, seasonId]);
+        function makeEpisodeRow(episode, seriesId, seasonId, seriesName, seasonName) {
+          var row = makeCheckboxRow(episode, "Episode", [seriesId, seasonId], [seriesName, seasonName]);
           row.style.marginLeft = "3em";
           return row;
         }
