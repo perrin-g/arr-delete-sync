@@ -147,8 +147,10 @@ public class ArrClient : IArrClient
             return false;
         }
 
-        var fileIds = episodes
-            .Where(e => e.SeasonNumber == seasonNumber && e.EpisodeFileId != 0)
+        var seasonEpisodes = episodes.Where(e => e.SeasonNumber == seasonNumber).ToList();
+
+        var fileIds = seasonEpisodes
+            .Where(e => e.EpisodeFileId != 0)
             .Select(e => e.EpisodeFileId)
             .Distinct() // a combined multi-episode file must only be deleted once
             .ToList();
@@ -162,7 +164,17 @@ public class ArrClient : IArrClient
             }
         }
 
-        return allSucceeded;
+        if (!allSucceeded)
+        {
+            return false;
+        }
+
+        // Unmonitor every episode in the season, not just the ones that had a file -- Sonarr
+        // leaves deleted content monitored by default, and without this its own automatic
+        // search/RSS sync can silently re-download exactly what was just deleted, undoing it.
+        // Includes not-yet-aired episodes too, since the whole season is being deleted.
+        var episodeIds = seasonEpisodes.Select(e => e.Id).Where(id => id != 0).ToList();
+        return await SetEpisodesMonitoredAsync(episodeIds, monitored: false);
     }
 
     // Deletes the single file backing one episode. The caller already verifies (via
@@ -185,10 +197,20 @@ public class ArrClient : IArrClient
             return false;
         }
 
-        return await DeleteEpisodeFileByIdAsync(match.EpisodeFileId);
+        if (!await DeleteEpisodeFileByIdAsync(match.EpisodeFileId))
+        {
+            return false;
+        }
+
+        if (match.Id == 0)
+        {
+            return true; // no episode id to unmonitor against (shouldn't happen for a matched episode)
+        }
+
+        return await SetEpisodesMonitoredAsync(new List<int> { match.Id }, monitored: false);
     }
 
-    private readonly record struct EpisodeRecord(int SeasonNumber, int EpisodeNumber, int EpisodeFileId);
+    private readonly record struct EpisodeRecord(int Id, int SeasonNumber, int EpisodeNumber, int EpisodeFileId);
 
     private async Task<List<EpisodeRecord>?> FetchEpisodesAsync(int seriesInternalId)
     {
@@ -211,10 +233,11 @@ public class ArrClient : IArrClient
             var episodes = new List<EpisodeRecord>();
             foreach (var episode in episodeDoc.RootElement.EnumerateArray())
             {
+                var id = episode.TryGetProperty("id", out var idProp) ? idProp.GetInt32() : 0;
                 var season = episode.TryGetProperty("seasonNumber", out var s) ? s.GetInt32() : -1;
                 var number = episode.TryGetProperty("episodeNumber", out var e) ? e.GetInt32() : -1;
                 var fileId = episode.TryGetProperty("episodeFileId", out var fileIdProp) ? fileIdProp.GetInt32() : 0;
-                episodes.Add(new EpisodeRecord(season, number, fileId));
+                episodes.Add(new EpisodeRecord(id, season, number, fileId));
             }
 
             return episodes;
@@ -232,6 +255,35 @@ public class ArrClient : IArrClient
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+            request.Headers.Add("X-Api-Key", _apiKey);
+            using var response = await _httpClient.SendAsync(request);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    // Confirmed from Sonarr's own source (EpisodeController.SetEpisodesMonitored) that
+    // PUT /api/v3/episode/monitor is the bulk endpoint for this, taking {episodeIds, monitored}.
+    // No episode ids to unmonitor is a vacuous success, not a call worth making.
+    private async Task<bool> SetEpisodesMonitoredAsync(IReadOnlyList<int> episodeIds, bool monitored)
+    {
+        if (episodeIds.Count == 0)
+        {
+            return true;
+        }
+
+        var url = $"{_baseUrl}/api/v3/episode/monitor";
+        var body = JsonSerializer.Serialize(new { episodeIds, monitored });
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, url)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            };
             request.Headers.Add("X-Api-Key", _apiKey);
             using var response = await _httpClient.SendAsync(request);
             return response.IsSuccessStatusCode;

@@ -8,6 +8,7 @@ When you delete a movie or TV show from Jellyfin, **ArrDeleteSync** coordinates 
 
 - **Multi-level granularity** — Delete individual episodes, entire seasons, whole series, or movies
 - **Arr integration** — Confirms tracking in Radarr/Sonarr before deletion and coordinates file removal
+- **Stays deleted** — Season/episode deletes also unmonitor the affected episodes in Sonarr, so its own automatic search/RSS sync doesn't silently re-download what you just deleted
 - **Seerr sync** — Updates media availability in Seerr when requests are completed
 - **Retry queue** — Failed deletions are automatically retried with exponential backoff; view and manage retries via the UI
 - **Circuit breaker** — Stops making API calls if repeated failures are detected, preventing cascading issues

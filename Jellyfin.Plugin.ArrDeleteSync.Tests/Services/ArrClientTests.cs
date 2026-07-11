@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ArrDeleteSync.Models;
@@ -344,25 +345,32 @@ public class ArrClientTests
     }
 
     [Fact]
-    public async Task DeleteEpisodeFiles_DoesNotSendRequestBody()
+    public async Task DeleteEpisodeFiles_DeleteRequest_DoesNotSendRequestBody()
     {
+        // Regression test: this used to check handler.LastRequest, which was fine when the
+        // episodefile DELETE was the only request in the exchange -- now that a successful
+        // delete is followed by an unmonitor PUT (which legitimately needs a body), the DELETE
+        // request itself must be captured specifically rather than assumed to be "the last one".
+        var requests = new List<HttpRequestMessage>();
         var handler = new FakeHttpMessageHandler(req =>
         {
-            if (req.Method == HttpMethod.Delete)
+            requests.Add(req);
+            if (req.Method == HttpMethod.Delete || req.Method == HttpMethod.Put)
             {
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]")
+                Content = new StringContent("[{\"id\":900,\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]")
             };
         });
         var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
 
         await client.DeleteEpisodeFilesAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
 
-        Assert.Null(handler.LastRequest!.Content);
+        var deleteRequest = requests.Single(r => r.Method == HttpMethod.Delete);
+        Assert.Null(deleteRequest.Content);
     }
 
     [Fact]
@@ -377,5 +385,121 @@ public class ArrClientTests
         var success = await client.DeleteEpisodeFilesAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
 
         Assert.False(success);
+    }
+
+    // Sonarr leaves deleted content monitored by default -- without explicitly unmonitoring it,
+    // Sonarr's own automatic search/RSS sync can silently re-download the exact content that was
+    // just deleted through this plugin, undoing the deletion. Confirmed via Sonarr's own source
+    // (EpisodeController.SetEpisodesMonitored / PUT /api/v3/episode/monitor) that this is the
+    // correct bulk endpoint: {episodeIds: [...], monitored: bool}.
+
+    private static HttpResponseMessage RouteEpisodesDeleteAndMonitor(
+        HttpRequestMessage req,
+        string episodeListJson,
+        List<int> deletedFileIds,
+        List<string> monitorRequestBodies,
+        bool monitorShouldSucceed = true)
+    {
+        if (req.Method == HttpMethod.Delete)
+        {
+            deletedFileIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+
+        if (req.Method == HttpMethod.Put)
+        {
+            // Must read the body here, synchronously within the routing callback -- ArrClient
+            // disposes the HttpRequestMessage (and its Content) via `using` as soon as SendAsync
+            // returns, so reading it back out after the whole call completes throws
+            // ObjectDisposedException.
+            monitorRequestBodies.Add(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            return new HttpResponseMessage(monitorShouldSucceed ? HttpStatusCode.OK : HttpStatusCode.InternalServerError);
+        }
+
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(episodeListJson) };
+    }
+
+    [Fact]
+    public async Task DeleteSeasonFiles_UnmonitorsAllEpisodesInSeason_IncludingOnesWithNoFileYet()
+    {
+        var deletedFileIds = new List<int>();
+        var monitorRequestBodies = new List<string>();
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodesDeleteAndMonitor(
+            req,
+            "[{\"id\":900,\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}," +
+            "{\"id\":901,\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":0}," + // not aired yet, no file
+            "{\"id\":902,\"seasonNumber\":2,\"episodeNumber\":1,\"episodeFileId\":200}]", // different season
+            deletedFileIds,
+            monitorRequestBodies));
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
+
+        Assert.True(success);
+        Assert.Single(monitorRequestBodies);
+        using var doc = JsonDocument.Parse(monitorRequestBodies[0]);
+        var ids = doc.RootElement.GetProperty("episodeIds").EnumerateArray().Select(e => e.GetInt32()).OrderBy(x => x).ToList();
+        Assert.Equal(new[] { 900, 901 }, ids); // both season-1 episodes, including the fileless one -- not 902 (season 2)
+        Assert.False(doc.RootElement.GetProperty("monitored").GetBoolean());
+    }
+
+    [Fact]
+    public async Task DeleteSeasonFiles_ReturnsFalse_WhenUnmonitorCallFails()
+    {
+        var deletedFileIds = new List<int>();
+        var monitorRequestBodies = new List<string>();
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodesDeleteAndMonitor(
+            req,
+            "[{\"id\":900,\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]",
+            deletedFileIds,
+            monitorRequestBodies,
+            monitorShouldSucceed: false));
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
+
+        Assert.False(success);
+        Assert.Single(deletedFileIds); // the file delete itself still succeeded
+    }
+
+    [Fact]
+    public async Task DeleteEpisodeFiles_UnmonitorsThatEpisode_AfterDeletingFile()
+    {
+        var deletedFileIds = new List<int>();
+        var monitorRequestBodies = new List<string>();
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodesDeleteAndMonitor(
+            req,
+            "[{\"id\":900,\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]",
+            deletedFileIds,
+            monitorRequestBodies));
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteEpisodeFilesAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.True(success);
+        Assert.Single(monitorRequestBodies);
+        using var doc = JsonDocument.Parse(monitorRequestBodies[0]);
+        var ids = doc.RootElement.GetProperty("episodeIds").EnumerateArray().Select(e => e.GetInt32()).ToList();
+        Assert.Equal(new[] { 900 }, ids);
+        Assert.False(doc.RootElement.GetProperty("monitored").GetBoolean());
+    }
+
+    [Fact]
+    public async Task DeleteEpisodeFiles_ReturnsFalse_WhenUnmonitorCallFails()
+    {
+        var deletedFileIds = new List<int>();
+        var monitorRequestBodies = new List<string>();
+        var handler = new FakeHttpMessageHandler(req => RouteEpisodesDeleteAndMonitor(
+            req,
+            "[{\"id\":900,\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]",
+            deletedFileIds,
+            monitorRequestBodies,
+            monitorShouldSucceed: false));
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteEpisodeFilesAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.False(success);
+        Assert.Single(deletedFileIds);
     }
 }
