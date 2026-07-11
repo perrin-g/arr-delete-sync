@@ -64,6 +64,11 @@ public class JellyfinItemAccessor : IJellyfinItemAccessor
             {
                 info.SeriesTvdbId = seriesTvdb;
             }
+
+            if (season.Series?.ProviderIds.TryGetValue("Tmdb", out var seriesTmdb) == true)
+            {
+                info.SeriesTmdbId = seriesTmdb;
+            }
         }
         else if (item is Episode episode)
         {
@@ -74,9 +79,32 @@ public class JellyfinItemAccessor : IJellyfinItemAccessor
             {
                 info.SeriesTvdbId = epSeriesTvdb;
             }
+
+            if (episode.Series?.ProviderIds.TryGetValue("Tmdb", out var epSeriesTmdb) == true)
+            {
+                info.SeriesTmdbId = epSeriesTmdb;
+            }
         }
 
         return info;
+    }
+
+    // The library (top-level CollectionFolder, e.g. "Movies", "Discover") an item lives under.
+    // GetCollectionFolders is the same API BaseItem.CanDelete itself uses internally to resolve
+    // an item's owning library/libraries -- verified by decompiling the pinned 10.11.11
+    // MediaBrowser.Controller.dll rather than assuming a signature (there's no GetTopParent() on
+    // BaseItem in this version). An item can technically belong to more than one library if
+    // multiple libraries share an overlapping path; the first is enough to check against an
+    // excluded-library name.
+    public string? GetLibraryName(Guid itemId)
+    {
+        var item = _libraryManager.GetItemById(itemId);
+        if (item == null)
+        {
+            return null;
+        }
+
+        return _libraryManager.GetCollectionFolders(item).FirstOrDefault()?.Name;
     }
 
     // Metadata-only removal of Jellyfin's own catalog entry. DeleteFileLocation is

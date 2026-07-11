@@ -71,7 +71,21 @@ public class ServiceRegistrator : IPluginServiceRegistrator
             var key = Plugin.Instance!.KeyProtector.Unprotect(config.SeerrApiKeyEncrypted);
             return new SeerrClient(httpClient, config.SeerrUrl, key);
         });
-        serviceCollection.AddSingleton<IDeleteOrchestrator, DeleteOrchestrator>();
+        serviceCollection.AddSingleton<IDeleteOrchestrator>(provider =>
+        {
+            var config = Plugin.Instance!.Configuration;
+            var excludedLibraryNames = config.ExcludedLibraryNames
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
+            return new DeleteOrchestrator(
+                provider.GetRequiredService<IJellyfinItemAccessor>(),
+                provider.GetRequiredService<IArrClientFactory>(),
+                provider.GetRequiredService<ISeerrClient>(),
+                provider.GetRequiredService<IRetryQueueStore>(),
+                provider.GetRequiredService<IAuditLogStore>(),
+                provider.GetRequiredService<ICircuitBreaker>(),
+                excludedLibraryNames);
+        });
         // RetryQueueTask needs the configured attempt limit, but Jellyfin's host independently
         // tries to construct every IScheduledTask implementation via its own DI activator (in
         // addition to -- not instead of -- the factory registration below), and a bare `int`

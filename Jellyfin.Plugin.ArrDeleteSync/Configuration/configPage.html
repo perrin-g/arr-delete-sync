@@ -36,6 +36,10 @@
             <input is="emby-input" type="number" id="AuditLogRetentionDays" label="Audit log retention (days)" />
             <button is="emby-button" type="button" class="raised" id="ResetBreaker">Reset circuit breaker</button>
           </div>
+          <div class="verticalSection">
+            <h2>Delete Manager</h2>
+            <input is="emby-input" type="text" id="ExcludedLibraryNames" label="Libraries to exclude (comma-separated names, e.g. Discover)" />
+          </div>
           <button is="emby-button" type="submit" class="raised block" id="SaveButton">
             <span>Save</span>
           </button>
@@ -56,7 +60,7 @@
         // Fields whose changes should mark the form dirty (Save needs highlighting) -- the
         // Test Connection / Reset circuit breaker buttons act immediately on their own and
         // aren't part of this list.
-        var DIRTY_TRACKED_FIELDS = ["RadarrUrl", "RadarrApiKey", "SonarrUrl", "SonarrApiKey", "SeerrUrl", "SeerrApiKey", "RetryMaxAttempts", "CircuitBreakerThreshold", "AuditLogRetentionDays"];
+        var DIRTY_TRACKED_FIELDS = ["RadarrUrl", "RadarrApiKey", "SonarrUrl", "SonarrApiKey", "SeerrUrl", "SeerrApiKey", "RetryMaxAttempts", "CircuitBreakerThreshold", "AuditLogRetentionDays", "ExcludedLibraryNames"];
 
         function setDirty(isDirty) {
           document.getElementById("SaveButton").className = isDirty ? "raised button-submit block" : "raised block";
@@ -71,6 +75,7 @@
             page.querySelector("#RetryMaxAttempts").value = config.RetryMaxAttempts || 5;
             page.querySelector("#CircuitBreakerThreshold").value = config.CircuitBreakerThreshold || 5;
             page.querySelector("#AuditLogRetentionDays").value = config.AuditLogRetentionDays || 15;
+            page.querySelector("#ExcludedLibraryNames").value = config.ExcludedLibraryNames || "";
             setDirty(false);
             Dashboard.hideLoadingMsg();
           });
@@ -98,6 +103,7 @@
             config.RetryMaxAttempts = parseInt(document.getElementById("RetryMaxAttempts").value, 10);
             config.CircuitBreakerThreshold = parseInt(document.getElementById("CircuitBreakerThreshold").value, 10);
             config.AuditLogRetentionDays = parseInt(document.getElementById("AuditLogRetentionDays").value, 10);
+            config.ExcludedLibraryNames = document.getElementById("ExcludedLibraryNames").value;
             // Plaintext key inputs are sent over the already-authenticated admin API
             // session and encrypted server-side before being written to
             // PluginConfiguration.xml — the browser never sees the encrypted form.

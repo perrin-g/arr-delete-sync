@@ -25,4 +25,9 @@ public class PluginConfiguration : BasePluginConfiguration
     public int CircuitBreakerThreshold { get; set; } = 5;
     public int CircuitBreakerWindowMinutes { get; set; } = 15;
     public int AuditLogRetentionDays { get; set; } = 15;
+
+    // Comma-separated library names (e.g. "Discover") to exclude from both the Delete Manager's
+    // Movies/TV lists and server-side delete requests. Empty by default -- no exclusions until an
+    // admin configures one.
+    public string ExcludedLibraryNames { get; set; } = string.Empty;
 }

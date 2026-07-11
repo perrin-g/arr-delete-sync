@@ -416,13 +416,208 @@ public class DeleteOrchestratorExecuteTests
         accessor.Setup(a => a.DeleteItem(itemId, out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny))
             .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
             .Returns(true);
-        arr.Setup(a => a.DeleteAsync(7, true)).ReturnsAsync(true);
+        // Regression test: this used to assert arr.DeleteAsync(7, true) -- deleting the WHOLE
+        // series (7 is the series' internal id) for a single-episode delete, pinning the bug
+        // this fix resolves as "expected" behavior. It must call the episode-scoped delete.
+        arr.Setup(a => a.DeleteEpisodeFilesAsync(7, 1, 1)).ReturnsAsync(true);
 
         var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
 
         var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Episode });
 
         Assert.True(outcome.ArrDeleted);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_SeasonDelete_CallsDeleteSeasonFilesAsync_NotWholeSeriesDelete()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "Season 1", Granularity = DeleteGranularity.Season,
+            TvdbId = "371572", SeasonNumber = 1, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        seerr.Setup(s => s.SearchByTitleAsync(It.IsAny<string>(), null, true)).ReturnsAsync((SeerrLookupResult?)null);
+        arr.Setup(a => a.DeleteSeasonFilesAsync(7, 1)).ReturnsAsync(true);
+        accessor.Setup(a => a.DeleteItem(itemId, out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny))
+            .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
+            .Returns(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Season });
+
+        Assert.True(outcome.ArrDeleted);
+        arr.Verify(a => a.DeleteSeasonFilesAsync(7, 1), Times.Once);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_SeriesDelete_StillCallsWholeSeriesDeleteAsync()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "The Pitt", Granularity = DeleteGranularity.Series,
+            TvdbId = "371572", HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        seerr.Setup(s => s.SearchByTitleAsync(It.IsAny<string>(), null, true)).ReturnsAsync((SeerrLookupResult?)null);
+        arr.Setup(a => a.DeleteAsync(7, true)).ReturnsAsync(true);
+        accessor.Setup(a => a.DeleteItem(itemId, out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny))
+            .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
+            .Returns(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Series });
+
+        Assert.True(outcome.ArrDeleted);
+        arr.Verify(a => a.DeleteAsync(7, true), Times.Once);
+        arr.Verify(a => a.DeleteSeasonFilesAsync(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_SeasonDelete_Blocks_WhenSeasonNumberMissing_NeverFallsBackToWholeSeriesDelete()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "Season 1", Granularity = DeleteGranularity.Season,
+            TvdbId = "371572", SeasonNumber = null, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Season });
+
+        Assert.False(outcome.ArrDeleted);
+        Assert.NotNull(outcome.BlockedReason);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+        arr.Verify(a => a.DeleteSeasonFilesAsync(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_EpisodeDelete_Blocks_WhenEpisodeNumberMissing_NeverFallsBackToWholeSeriesDelete()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "S01E??", Granularity = DeleteGranularity.Episode,
+            TvdbId = "371572", SeasonNumber = 1, EpisodeNumber = null, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Episode });
+
+        Assert.False(outcome.ArrDeleted);
+        Assert.NotNull(outcome.BlockedReason);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+        arr.Verify(a => a.DeleteEpisodeFilesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_SeasonDeleteFails_QueuesRetryEntry_WithSeasonNumberPersisted()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "Season 1", Granularity = DeleteGranularity.Season,
+            TvdbId = "371572", SeasonNumber = 1, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        seerr.Setup(s => s.SearchByTitleAsync(It.IsAny<string>(), null, true)).ReturnsAsync((SeerrLookupResult?)null);
+        arr.Setup(a => a.DeleteSeasonFilesAsync(7, 1)).ReturnsAsync(false);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Season });
+
+        Assert.False(outcome.ArrDeleted);
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.SeasonNumber == 1 && e.Granularity == DeleteGranularity.Season)), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_EpisodeDeleteFails_QueuesRetryEntry_WithSeasonAndEpisodeNumberPersisted()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "S01E01", Granularity = DeleteGranularity.Episode,
+            TvdbId = "371572", SeasonNumber = 1, EpisodeNumber = 1, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        arr.Setup(a => a.GetEpisodeFileCoverageCountAsync(7, 1, 1)).ReturnsAsync(1);
+        seerr.Setup(s => s.SearchByTitleAsync(It.IsAny<string>(), null, true)).ReturnsAsync((SeerrLookupResult?)null);
+        arr.Setup(a => a.DeleteEpisodeFilesAsync(7, 1, 1)).ReturnsAsync(false);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Episode });
+
+        Assert.False(outcome.ArrDeleted);
+        queue.Verify(q => q.UpsertAsync(It.Is<RetryQueueEntry>(e => e.SeasonNumber == 1 && e.EpisodeNumber == 1 && e.Granularity == DeleteGranularity.Episode)), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_Blocks_WhenItemBelongsToExcludedLibrary()
+    {
+        // Security hardening: the Delete Manager UI hides excluded-library items from its list,
+        // but that alone doesn't stop a direct POST to /ArrDeleteSync/delete for one of their
+        // item ids (stale tab, replayed request, a future UI regression). This is the
+        // server-side enforcement that closes that gap.
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(MakeMovie(itemId));
+        accessor.Setup(a => a.GetLibraryName(itemId)).Returns("Discover");
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object, excludedLibraryNames: new[] { "Discover" });
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
+
+        Assert.False(outcome.ArrDeleted);
+        Assert.NotNull(outcome.BlockedReason);
+        arr.Verify(a => a.FindByProviderIdAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Never);
+        seerr.Verify(s => s.FindByTmdbIdAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_DoesNotCheckExcludedLibrary_WhenNoneConfigured()
+    {
+        // No wasted GetLibraryName lookup on the default/common case where nothing is excluded.
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(MakeMovie(itemId));
+        arr.Setup(a => a.FindByProviderIdAsync("tmdbId", "603", false))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.ConfirmedNotTracked });
+        seerr.Setup(s => s.FindByTmdbIdAsync(603, false))
+            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.ConfirmedNotTracked });
+        accessor.Setup(a => a.DeleteItem(itemId, out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny))
+            .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
+            .Returns(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Movie });
+
+        accessor.Verify(a => a.GetLibraryName(It.IsAny<Guid>()), Times.Never);
     }
 }
 

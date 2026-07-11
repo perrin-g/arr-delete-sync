@@ -12,6 +12,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
     private readonly IRetryQueueStore _retryQueueStore;
     private readonly IAuditLogStore _auditLogStore;
     private readonly ICircuitBreaker _circuitBreaker;
+    private readonly IReadOnlyList<string> _excludedLibraryNames;
 
     public DeleteOrchestrator(
         IJellyfinItemAccessor itemAccessor,
@@ -19,7 +20,8 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         ISeerrClient seerrClient,
         IRetryQueueStore retryQueueStore,
         IAuditLogStore auditLogStore,
-        ICircuitBreaker circuitBreaker)
+        ICircuitBreaker circuitBreaker,
+        IReadOnlyList<string>? excludedLibraryNames = null)
     {
         _itemAccessor = itemAccessor;
         _arrClientFactory = arrClientFactory;
@@ -27,6 +29,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         _retryQueueStore = retryQueueStore;
         _auditLogStore = auditLogStore;
         _circuitBreaker = circuitBreaker;
+        _excludedLibraryNames = excludedLibraryNames ?? Array.Empty<string>();
     }
 
     // Shared by ExecuteDeleteAsync's four failure branches, which otherwise each repeat the same
@@ -43,7 +46,9 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         bool isStructuralFailure = false,
         bool requiresManualFileCleanup = false,
         string? filePath = null,
-        DateTime? nextRetryAtUtc = null)
+        DateTime? nextRetryAtUtc = null,
+        int? seasonNumber = null,
+        int? episodeNumber = null)
     {
         return new RetryQueueEntry
         {
@@ -53,6 +58,8 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             Granularity = granularity,
             ProviderIdType = resolution.ProviderIdType,
             ProviderIdValue = resolution.ProviderIdValue,
+            SeasonNumber = seasonNumber,
+            EpisodeNumber = episodeNumber,
             ArrDeleteStatus = arrStatus,
             JellyfinCleanupStatus = jellyfinStatus,
             SeerrUpdateStatus = seerrStatus,
@@ -61,6 +68,34 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             NextRetryAtUtc = nextRetryAtUtc ?? DateTime.UtcNow.AddMinutes(5),
             RequiresManualFileCleanup = requiresManualFileCleanup,
             FilePath = filePath
+        };
+    }
+
+    // Single choke point for "which arr delete call does this granularity need" -- shared by
+    // ExecuteDeleteAsync's first attempt and ProcessRetryEntryAsync's general-branch retry, so
+    // the two can never drift apart the way DeleteAsync's whole-series call used to get reused
+    // for every granularity. Season/Episode without a resolvable number (e.g. a retry-queue entry
+    // persisted before SeasonNumber/EpisodeNumber existed on the model) fails closed rather than
+    // ever falling back to the whole-series/movie DeleteAsync -- callers of this method for
+    // Season/Episode granularity are expected to have already blocked that case earlier when the
+    // number is knowable up front (see ExecuteDeleteAsync's guard), so reaching the closed-fail
+    // branch here should only happen for stale retry-queue entries from before this fix shipped.
+    private static async Task<bool> DeleteArrContentAsync(
+        IArrClient client,
+        bool isSeries,
+        int arrInternalId,
+        DeleteGranularity granularity,
+        int? seasonNumber,
+        int? episodeNumber)
+    {
+        return granularity switch
+        {
+            DeleteGranularity.Season when seasonNumber.HasValue =>
+                await client.DeleteSeasonFilesAsync(arrInternalId, seasonNumber.Value),
+            DeleteGranularity.Episode when seasonNumber.HasValue && episodeNumber.HasValue =>
+                await client.DeleteEpisodeFilesAsync(arrInternalId, seasonNumber.Value, episodeNumber.Value),
+            DeleteGranularity.Season or DeleteGranularity.Episode => false,
+            _ => await client.DeleteAsync(arrInternalId, isSeries)
         };
     }
 
@@ -74,7 +109,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
 
         var isSeries = granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
         var tvdbId = granularity == DeleteGranularity.Movie ? null : (item.SeriesTvdbId ?? item.TvdbId);
-        var tmdbId = item.TmdbId;
+        var tmdbId = isSeries ? (item.SeriesTmdbId ?? item.TmdbId) : item.TmdbId;
 
         if (isSeries && string.IsNullOrEmpty(tmdbId) && !string.IsNullOrEmpty(tvdbId))
         {
@@ -167,6 +202,20 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Circuit breaker is tripped — repeated failures detected. An admin must manually reset it." };
         }
 
+        // Server-side enforcement of the Delete Manager's excluded-library filter: the UI only
+        // hides these items from its list, which doesn't stop a direct call here for one of their
+        // item ids. Only checked when at least one exclusion is configured, so the common
+        // (nothing excluded) case never pays for a library lookup.
+        if (_excludedLibraryNames.Count > 0)
+        {
+            var libraryName = _itemAccessor.GetLibraryName(request.JellyfinItemId);
+            if (libraryName != null && _excludedLibraryNames.Contains(libraryName, StringComparer.OrdinalIgnoreCase))
+            {
+                await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Item belongs to an excluded library", false, null);
+                return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = $"This item is in the excluded library \"{libraryName}\" and can't be deleted through ArrDeleteSync." };
+            }
+        }
+
         var resolution = await ResolveAsync(request.JellyfinItemId, request.Granularity);
 
         if (!resolution.HasUsableProviderId && !request.Force)
@@ -179,6 +228,21 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         {
             await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Virtual season, no physical layout", false, null);
             return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Season-level delete isn't available for this show's layout (no physical per-season folder)." };
+        }
+
+        // Season 0 ("Specials" in Sonarr) is a legitimate, common value -- this must check
+        // HasValue/null, never a falsy/truthy check, or every Specials delete would wrongly block
+        // (or worse, fall through with a null season number toward the arr-delete switch below).
+        if (request.Granularity == DeleteGranularity.Season && itemInfo?.SeasonNumber == null)
+        {
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Could not determine season number for this item", false, null);
+            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Could not determine this item's season number — blocking rather than risk deleting the wrong content." };
+        }
+
+        if (request.Granularity == DeleteGranularity.Episode && (itemInfo?.SeasonNumber == null || itemInfo?.EpisodeNumber == null))
+        {
+            await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "Blocked", "Failed", "Could not determine season/episode number for this item", false, null);
+            return new DeleteOutcome { ArrDeleted = false, JellyfinCleanedUp = false, SeerrUpdated = false, BlockedReason = "Could not determine this item's season/episode number — blocking rather than risk deleting the wrong content." };
         }
 
         if (request.Granularity == DeleteGranularity.Episode)
@@ -211,7 +275,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         if (resolution.State == ArrTrackingState.Indeterminate)
         {
             const string indeterminateError = "Could not verify arr status; queued for retry";
-            var pendingEntry = MakeRetryEntry(request.JellyfinItemId, itemName, request.Granularity, resolution, indeterminateError);
+            var pendingEntry = MakeRetryEntry(request.JellyfinItemId, itemName, request.Granularity, resolution, indeterminateError, seasonNumber: itemInfo?.SeasonNumber, episodeNumber: itemInfo?.EpisodeNumber);
             await _retryQueueStore.UpsertAsync(pendingEntry);
             _circuitBreaker.RecordFailure();
             await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", indeterminateError, false, null);
@@ -225,12 +289,13 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         if (!isUntracked && resolution.State == ArrTrackingState.Tracked && resolution.ArrInternalId.HasValue)
         {
             var isSeries = request.Granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
-            arrDeleted = await _arrClientFactory.GetClient(isSeries).DeleteAsync(resolution.ArrInternalId.Value, isSeries);
+            var client = _arrClientFactory.GetClient(isSeries);
+            arrDeleted = await DeleteArrContentAsync(client, isSeries, resolution.ArrInternalId.Value, request.Granularity, itemInfo?.SeasonNumber, itemInfo?.EpisodeNumber);
 
             if (!arrDeleted)
             {
                 const string arrDeleteError = "arr delete call failed";
-                var entry = MakeRetryEntry(request.JellyfinItemId, itemName, request.Granularity, resolution, arrDeleteError, arrStatus: DeleteStepStatus.Failed);
+                var entry = MakeRetryEntry(request.JellyfinItemId, itemName, request.Granularity, resolution, arrDeleteError, arrStatus: DeleteStepStatus.Failed, seasonNumber: itemInfo?.SeasonNumber, episodeNumber: itemInfo?.EpisodeNumber);
                 await _retryQueueStore.UpsertAsync(entry);
                 _circuitBreaker.RecordFailure();
                 await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", arrDeleteError, false, null);
@@ -265,7 +330,9 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 isStructuralFailure: isStructural,
                 requiresManualFileCleanup: requiresManualFileCleanup,
                 filePath: filePath,
-                nextRetryAtUtc: isStructural ? DateTime.MaxValue : DateTime.UtcNow.AddMinutes(5));
+                nextRetryAtUtc: isStructural ? DateTime.MaxValue : DateTime.UtcNow.AddMinutes(5),
+                seasonNumber: itemInfo?.SeasonNumber,
+                episodeNumber: itemInfo?.EpisodeNumber);
             await _retryQueueStore.UpsertAsync(entry);
             _circuitBreaker.RecordFailure();
             await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", isStructural ? "Failed" : "Partial", entry.LastError, requiresManualFileCleanup, filePath);
@@ -285,7 +352,9 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 request.JellyfinItemId, itemName, request.Granularity, resolution, seerrError,
                 arrStatus: DeleteStepStatus.Succeeded,
                 jellyfinStatus: DeleteStepStatus.Succeeded,
-                seerrStatus: DeleteStepStatus.Failed);
+                seerrStatus: DeleteStepStatus.Failed,
+                seasonNumber: itemInfo?.SeasonNumber,
+                episodeNumber: itemInfo?.EpisodeNumber);
             await _retryQueueStore.UpsertAsync(entry);
             _circuitBreaker.RecordFailure();
             await LogAsync(request.JellyfinItemId, itemName, request.Granularity, "SyncedDelete", "Partial", seerrError, requiresManualFileCleanup, filePath);
@@ -337,6 +406,8 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                     entry.SeerrUpdateStatus = freshEntry.SeerrUpdateStatus;
                     entry.ProviderIdType = freshEntry.ProviderIdType;
                     entry.ProviderIdValue = freshEntry.ProviderIdValue;
+                    entry.SeasonNumber = freshEntry.SeasonNumber;
+                    entry.EpisodeNumber = freshEntry.EpisodeNumber;
                     entry.IsStructuralFailure = freshEntry.IsStructuralFailure;
                     entry.RequiresManualFileCleanup = freshEntry.RequiresManualFileCleanup;
                     entry.FilePath = freshEntry.FilePath;
@@ -362,7 +433,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 }
                 else if (lookup.State == ArrTrackingState.Tracked && lookup.InternalId.HasValue)
                 {
-                    arrOk = await _arrClientFactory.GetClient(isSeries).DeleteAsync(lookup.InternalId.Value, isSeries);
+                    arrOk = await DeleteArrContentAsync(_arrClientFactory.GetClient(isSeries), isSeries, lookup.InternalId.Value, entry.Granularity, entry.SeasonNumber, entry.EpisodeNumber);
                 }
             }
             else

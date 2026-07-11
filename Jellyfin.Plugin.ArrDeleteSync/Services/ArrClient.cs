@@ -88,44 +88,20 @@ public class ArrClient : IArrClient
 
     public async Task<int> GetEpisodeFileCoverageCountAsync(int seriesInternalId, int seasonNumber, int episodeNumber)
     {
-        var episodeUrl = $"{_baseUrl}/api/v3/episode?seriesId={seriesInternalId}";
+        var episodes = await FetchEpisodesAsync(seriesInternalId);
+        if (episodes == null)
+        {
+            return -1; // caller treats negative as indeterminate and blocks conservatively
+        }
+
+        var match = episodes.Find(e => e.SeasonNumber == seasonNumber && e.EpisodeNumber == episodeNumber);
+        if (match.EpisodeFileId == 0)
+        {
+            return -1; // episode not found, or has no file — can't confirm coverage
+        }
 
         try
         {
-            using var episodeRequest = new HttpRequestMessage(HttpMethod.Get, episodeUrl);
-            episodeRequest.Headers.Add("X-Api-Key", _apiKey);
-            using var episodeResponse = await _httpClient.SendAsync(episodeRequest);
-
-            if (!episodeResponse.IsSuccessStatusCode)
-            {
-                return -1; // caller treats negative as indeterminate and blocks conservatively
-            }
-
-            var episodeBody = await episodeResponse.Content.ReadAsStringAsync();
-            using var episodeDoc = JsonDocument.Parse(episodeBody);
-
-            var episodeFileId = 0;
-            var found = false;
-            foreach (var episode in episodeDoc.RootElement.EnumerateArray())
-            {
-                if (episode.TryGetProperty("seasonNumber", out var s) && s.GetInt32() == seasonNumber &&
-                    episode.TryGetProperty("episodeNumber", out var e) && e.GetInt32() == episodeNumber)
-                {
-                    found = true;
-                    if (episode.TryGetProperty("episodeFileId", out var fileIdProp))
-                    {
-                        episodeFileId = fileIdProp.GetInt32();
-                    }
-
-                    break;
-                }
-            }
-
-            if (!found || episodeFileId == 0)
-            {
-                return -1; // episode not found, or has no file — can't confirm coverage
-            }
-
             var episodeFileUrl = $"{_baseUrl}/api/v3/episodefile?seriesId={seriesInternalId}";
             using var fileRequest = new HttpRequestMessage(HttpMethod.Get, episodeFileUrl);
             fileRequest.Headers.Add("X-Api-Key", _apiKey);
@@ -141,7 +117,7 @@ public class ArrClient : IArrClient
 
             foreach (var file in fileDoc.RootElement.EnumerateArray())
             {
-                if (file.TryGetProperty("id", out var idProp) && idProp.GetInt32() == episodeFileId &&
+                if (file.TryGetProperty("id", out var idProp) && idProp.GetInt32() == match.EpisodeFileId &&
                     file.TryGetProperty("episodeIds", out var episodeIds))
                 {
                     return episodeIds.GetArrayLength();
@@ -153,6 +129,116 @@ public class ArrClient : IArrClient
         catch (Exception)
         {
             return -1;
+        }
+    }
+
+    // Deletes every distinct episode file in the given season, without touching the series or
+    // any other season -- unlike DeleteAsync (whole series/movie), used only for Movie/Series
+    // granularity. Attempts every file even if one delete fails, rather than stopping at the
+    // first failure, so a single bad file can't strand the rest of the season undeleted; the
+    // caller (DeleteOrchestrator) queues a retry on any false, and re-fetching the episode list
+    // fresh on each retry means already-deleted files simply won't reappear (Sonarr clears their
+    // episodeFileId once gone), so a retry never re-attempts them.
+    public async Task<bool> DeleteSeasonFilesAsync(int seriesInternalId, int seasonNumber)
+    {
+        var episodes = await FetchEpisodesAsync(seriesInternalId);
+        if (episodes == null)
+        {
+            return false;
+        }
+
+        var fileIds = episodes
+            .Where(e => e.SeasonNumber == seasonNumber && e.EpisodeFileId != 0)
+            .Select(e => e.EpisodeFileId)
+            .Distinct() // a combined multi-episode file must only be deleted once
+            .ToList();
+
+        var allSucceeded = true;
+        foreach (var fileId in fileIds)
+        {
+            if (!await DeleteEpisodeFileByIdAsync(fileId))
+            {
+                allSucceeded = false;
+            }
+        }
+
+        return allSucceeded;
+    }
+
+    // Deletes the single file backing one episode. The caller already verifies (via
+    // GetEpisodeFileCoverageCountAsync) that this file covers only this one episode before
+    // calling here -- this re-fetches the episode list a second time rather than threading the
+    // already-resolved file id through, matching this codebase's existing precedent of
+    // re-resolving rather than caching (see ProcessRetryEntryAsync's doc comment) and costing one
+    // extra GET on what is always a human-paced, admin-triggered action.
+    public async Task<bool> DeleteEpisodeFilesAsync(int seriesInternalId, int seasonNumber, int episodeNumber)
+    {
+        var episodes = await FetchEpisodesAsync(seriesInternalId);
+        if (episodes == null)
+        {
+            return false;
+        }
+
+        var match = episodes.Find(e => e.SeasonNumber == seasonNumber && e.EpisodeNumber == episodeNumber);
+        if (match.EpisodeFileId == 0)
+        {
+            return false;
+        }
+
+        return await DeleteEpisodeFileByIdAsync(match.EpisodeFileId);
+    }
+
+    private readonly record struct EpisodeRecord(int SeasonNumber, int EpisodeNumber, int EpisodeFileId);
+
+    private async Task<List<EpisodeRecord>?> FetchEpisodesAsync(int seriesInternalId)
+    {
+        var episodeUrl = $"{_baseUrl}/api/v3/episode?seriesId={seriesInternalId}";
+
+        try
+        {
+            using var episodeRequest = new HttpRequestMessage(HttpMethod.Get, episodeUrl);
+            episodeRequest.Headers.Add("X-Api-Key", _apiKey);
+            using var episodeResponse = await _httpClient.SendAsync(episodeRequest);
+
+            if (!episodeResponse.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var episodeBody = await episodeResponse.Content.ReadAsStringAsync();
+            using var episodeDoc = JsonDocument.Parse(episodeBody);
+
+            var episodes = new List<EpisodeRecord>();
+            foreach (var episode in episodeDoc.RootElement.EnumerateArray())
+            {
+                var season = episode.TryGetProperty("seasonNumber", out var s) ? s.GetInt32() : -1;
+                var number = episode.TryGetProperty("episodeNumber", out var e) ? e.GetInt32() : -1;
+                var fileId = episode.TryGetProperty("episodeFileId", out var fileIdProp) ? fileIdProp.GetInt32() : 0;
+                episodes.Add(new EpisodeRecord(season, number, fileId));
+            }
+
+            return episodes;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private async Task<bool> DeleteEpisodeFileByIdAsync(int episodeFileId)
+    {
+        var url = $"{_baseUrl}/api/v3/episodefile/{episodeFileId}";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+            request.Headers.Add("X-Api-Key", _apiKey);
+            using var response = await _httpClient.SendAsync(request);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 }

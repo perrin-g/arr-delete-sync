@@ -94,7 +94,64 @@
          matching configPage.html's same fix. -->
     <script type="text/javascript">
       (function () {
+        var pluginId = "8f2c1e4a-6b3d-4a9e-9c1a-1a2b3c4d5e6f";
         var breakerTripped = false; // best-effort, reactive only — see note below
+
+        // null = unscoped (no exclusions configured, or resolution failed/hasn't run yet) --
+        // the pre-existing single unscoped getItems call is used in that case. Otherwise holds
+        // the ids of every library NOT in ExcludedLibraryNames, and one getItems call per id is
+        // made and aggregated client-side (Jellyfin's /Items endpoint takes a single ParentId,
+        // not a list). Resolved once per page view, not per-tab, so both tabs share it.
+        var includedLibraryIds = null;
+
+        function resolveLibraryScope() {
+          return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+            var excluded = (config.ExcludedLibraryNames || "")
+              .split(",")
+              .map(function (name) { return name.trim().toLowerCase(); })
+              .filter(function (name) { return name.length > 0; });
+
+            if (excluded.length === 0) {
+              includedLibraryIds = null;
+              return;
+            }
+
+            // NOTE: verify against the live jellyfin-web ApiClient build this ships against --
+            // written to jellyfin-apiclient-javascript's documented shape
+            // (getUserViews(options, userId), both optional, defaulting to the current user)
+            // rather than assumed, but not exercised against a running Jellyfin instance yet
+            // (see this file's own header comment on why live staging verification matters here).
+            return ApiClient.getUserViews().then(function (result) {
+              var views = (result && result.Items) || [];
+              includedLibraryIds = views
+                .filter(function (view) { return excluded.indexOf((view.Name || "").trim().toLowerCase()) === -1; })
+                .map(function (view) { return view.Id; });
+            });
+          }).catch(function (err) {
+            // Fail open (unscoped) -- a config/network hiccup must never hide the whole page,
+            // only fail to apply the exclusion for this page view.
+            console.error(err);
+            includedLibraryIds = null;
+          });
+        }
+
+        function fetchItemsAcrossLibraries(itemType) {
+          if (includedLibraryIds === null) {
+            return ApiClient.getItems(ApiClient.getCurrentUserId(), { IncludeItemTypes: itemType, Recursive: true })
+              .then(function (result) { return (result && result.Items) || []; });
+          }
+
+          if (includedLibraryIds.length === 0) {
+            return Promise.resolve([]);
+          }
+
+          return Promise.all(includedLibraryIds.map(function (libraryId) {
+            return ApiClient.getItems(ApiClient.getCurrentUserId(), { IncludeItemTypes: itemType, Recursive: true, ParentId: libraryId })
+              .then(function (result) { return (result && result.Items) || []; });
+          })).then(function (perLibraryResults) {
+            return perLibraryResults.reduce(function (all, items) { return all.concat(items); }, []);
+          });
+        }
 
         var selectedItems = {}; // keyed by Jellyfin item Id: { id, name, type, granularity, ancestorIds }
         var allMovies = [];
@@ -194,11 +251,8 @@
 
         function loadMoviesTab() {
           moviesPage = 1;
-          ApiClient.getItems(ApiClient.getCurrentUserId(), {
-            IncludeItemTypes: "Movie",
-            Recursive: true
-          }).then(function (result) {
-            allMovies = (result && result.Items) || [];
+          fetchItemsAcrossLibraries("Movie").then(function (items) {
+            allMovies = items;
             renderMoviesList(document.getElementById("MoviesFilter").value);
           }).catch(function (err) {
             console.error(err);
@@ -229,11 +283,8 @@
           episodesCache = {};
           expandedNodes = {};
           tvPage = 1;
-          ApiClient.getItems(ApiClient.getCurrentUserId(), {
-            IncludeItemTypes: "Series",
-            Recursive: true
-          }).then(function (result) {
-            allSeries = (result && result.Items) || [];
+          fetchItemsAcrossLibraries("Series").then(function (items) {
+            allSeries = items;
             renderTvList(document.getElementById("TvFilter").value);
           }).catch(function (err) {
             console.error(err);
@@ -631,8 +682,10 @@
           refreshBreakerStatus();
           refreshRetryQueue();
           refreshAuditLog();
-          loadMoviesTab();
-          loadTvTab();
+          resolveLibraryScope().then(function () {
+            loadMoviesTab();
+            loadTvTab();
+          });
         });
 
         document.addEventListener("input", function (e) {

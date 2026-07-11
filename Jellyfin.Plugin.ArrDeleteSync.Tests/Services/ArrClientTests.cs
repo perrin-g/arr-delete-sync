@@ -203,4 +203,179 @@ public class ArrClientTests
 
         Assert.Equal(-1, count);
     }
+
+    // Regression coverage for the bug where a Season/Episode delete wiped the whole Sonarr
+    // series: these exercise the season/episode-scoped file deletion that must be used instead
+    // of the whole-series DeleteAsync for these two granularities.
+
+    [Fact]
+    public async Task DeleteSeasonFiles_DeletesAllDistinctFilesInSeason_NotOtherSeasons()
+    {
+        var deletedIds = new List<int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Delete)
+            {
+                deletedIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}," +
+                    "{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":101}," +
+                    "{\"seasonNumber\":2,\"episodeNumber\":1,\"episodeFileId\":200}]")
+            };
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
+
+        Assert.True(success);
+        Assert.Equal(new[] { 100, 101 }, deletedIds.OrderBy(x => x));
+    }
+
+    [Fact]
+    public async Task DeleteSeasonFiles_DeduplicatesSharedMultiEpisodeFile()
+    {
+        var deletedIds = new List<int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Delete)
+            {
+                deletedIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}," +
+                    "{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":100}]")
+            };
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
+
+        Assert.True(success);
+        Assert.Single(deletedIds);
+        Assert.Equal(100, deletedIds[0]);
+    }
+
+    [Fact]
+    public async Task DeleteSeasonFiles_ReturnsTrue_WhenSeasonHasNoFiles()
+    {
+        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[{\"seasonNumber\":2,\"episodeNumber\":1,\"episodeFileId\":200}]")
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
+
+        Assert.True(success);
+    }
+
+    [Fact]
+    public async Task DeleteSeasonFiles_ReturnsFalse_WhenAnyFileDeleteFails_ButStillAttemptsAll()
+    {
+        var deletedIds = new List<int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Delete)
+            {
+                var id = int.Parse(req.RequestUri!.Segments.Last());
+                deletedIds.Add(id);
+                return new HttpResponseMessage(id == 100 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}," +
+                    "{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":101}]")
+            };
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
+
+        Assert.False(success);
+        Assert.Equal(new[] { 100, 101 }, deletedIds.OrderBy(x => x));
+    }
+
+    [Fact]
+    public async Task DeleteSeasonFiles_ReturnsFalse_WhenEpisodeListFetchFails()
+    {
+        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
+
+        Assert.False(success);
+    }
+
+    [Fact]
+    public async Task DeleteEpisodeFiles_DeletesOnlyThatEpisodesFile_UsesCorrectUrlAndMethod()
+    {
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Delete)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}," +
+                    "{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":101}]")
+            };
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteEpisodeFilesAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.True(success);
+        Assert.Equal(HttpMethod.Delete, handler.LastRequest!.Method);
+        Assert.EndsWith("/api/v3/episodefile/100", handler.LastRequest.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task DeleteEpisodeFiles_DoesNotSendRequestBody()
+    {
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Delete)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]")
+            };
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        await client.DeleteEpisodeFilesAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.Null(handler.LastRequest!.Content);
+    }
+
+    [Fact]
+    public async Task DeleteEpisodeFiles_ReturnsFalse_WhenEpisodeNotFoundOrHasNoFile()
+    {
+        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":100}]")
+        });
+        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
+
+        var success = await client.DeleteEpisodeFilesAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
+
+        Assert.False(success);
+    }
 }

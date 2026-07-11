@@ -14,6 +14,7 @@ public class JellyfinItemInfo
     public bool HasPhysicalPath { get; set; }
     public Guid? SeriesItemId { get; set; }
     public string? SeriesTvdbId { get; set; }
+    public string? SeriesTmdbId { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
 }

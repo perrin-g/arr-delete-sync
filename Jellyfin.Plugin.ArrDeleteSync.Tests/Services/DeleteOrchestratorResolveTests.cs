@@ -212,6 +212,114 @@ public class DeleteOrchestratorResolveTests
     }
 
     [Fact]
+    public async Task Resolve_Season_UsesSeriesTmdbId_WhenPresent_TakesPrimaryPath_NotFallback()
+    {
+        // Regression test: Season items never carry their own TmdbId, so before this fix
+        // ResolveAsync always fell into the title-search fallback for Season/Episode deletes --
+        // searching Seerr for the item's bare Jellyfin name ("Season 1"), which never matched the
+        // real show. Capturing the series' TmdbId (mirroring the existing SeriesTvdbId capture)
+        // lets Season/Episode resolution use the same reliable FindByTmdbIdAsync path Series
+        // already uses, whenever it's known.
+        var itemId = Guid.NewGuid();
+        var seasonInfo = new JellyfinItemInfo
+        {
+            Id = itemId,
+            Name = "Season 1",
+            Granularity = DeleteGranularity.Season,
+            SeriesTvdbId = "371572",
+            SeriesTmdbId = "94997"
+        };
+        var accessor = new Mock<IJellyfinItemAccessor>();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(seasonInfo);
+
+        var arrClient = new Mock<IArrClient>();
+        arrClient.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var seerrClient = new Mock<ISeerrClient>();
+        seerrClient.Setup(s => s.FindByTmdbIdAsync(94997, true))
+            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 20 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+
+        var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Season);
+
+        Assert.Equal(20, result.SeerrMediaId);
+        seerrClient.Verify(s => s.FindByTmdbIdAsync(94997, true), Times.Once);
+        seerrClient.Verify(s => s.SearchByTitleAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Resolve_Episode_UsesSeriesTmdbId_WhenPresent_TakesPrimaryPath()
+    {
+        var itemId = Guid.NewGuid();
+        var episodeInfo = new JellyfinItemInfo
+        {
+            Id = itemId,
+            Name = "S01E01",
+            Granularity = DeleteGranularity.Episode,
+            SeriesTvdbId = "371572",
+            SeriesTmdbId = "94997",
+            SeasonNumber = 1,
+            EpisodeNumber = 1
+        };
+        var accessor = new Mock<IJellyfinItemAccessor>();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(episodeInfo);
+
+        var arrClient = new Mock<IArrClient>();
+        arrClient.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var seerrClient = new Mock<ISeerrClient>();
+        seerrClient.Setup(s => s.FindByTmdbIdAsync(94997, true))
+            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 20 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+
+        var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Episode);
+
+        Assert.Equal(20, result.SeerrMediaId);
+        seerrClient.Verify(s => s.FindByTmdbIdAsync(94997, true), Times.Once);
+        seerrClient.Verify(s => s.SearchByTitleAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Resolve_Season_FallsBackToSeerrSearch_WhenSeriesHasNoTmdbId_OnlyTvdbId()
+    {
+        // The last-resort fallback (series has only a TVDB id) must stay reachable and
+        // unregressed for Season/Episode -- it's now a rarer path since most tracked shows carry
+        // a TMDB id, but it must not break entirely.
+        var itemId = Guid.NewGuid();
+        var seasonInfo = new JellyfinItemInfo
+        {
+            Id = itemId,
+            Name = "Season 1",
+            Granularity = DeleteGranularity.Season,
+            SeriesTvdbId = "371572"
+        };
+        var accessor = new Mock<IJellyfinItemAccessor>();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(seasonInfo);
+
+        var arrClient = new Mock<IArrClient>();
+        arrClient.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var seerrClient = new Mock<ISeerrClient>();
+        seerrClient.Setup(s => s.SearchByTitleAsync("Season 1", null, true))
+            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, TmdbId = 94997 });
+        seerrClient.Setup(s => s.VerifyTvdbIdAsync(94997, 371572)).ReturnsAsync(true);
+        seerrClient.Setup(s => s.FindByTmdbIdAsync(94997, true))
+            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 20 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arrClient.Object), seerrClient.Object, new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+
+        var result = await orchestrator.ResolveAsync(itemId, DeleteGranularity.Season);
+
+        Assert.True(result.SeerrMatchFromFallback);
+        Assert.Equal(20, result.SeerrMediaId);
+    }
+
+    [Fact]
     public async Task Resolve_RoutesToCorrectArrClient_MovieUsesRadarrClient_SeriesUsesSonarrClient()
     {
         var movieId = Guid.NewGuid();

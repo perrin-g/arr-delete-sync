@@ -179,4 +179,99 @@ public class DeleteOrchestratorRetryTests
         breaker.Verify(b => b.RecordFailure(), Times.Once);
         breaker.Verify(b => b.RecordSuccess(), Times.Never);
     }
+
+    [Fact]
+    public async Task ProcessRetry_GeneralBranch_SeasonGranularity_UsesSnapshottedSeasonNumber_NotWholeSeriesDelete()
+    {
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true)).ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        arr.Setup(a => a.DeleteSeasonFilesAsync(7, 1)).ReturnsAsync(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Season,
+            ProviderIdType = "tvdbId", ProviderIdValue = "371572", SeasonNumber = 1,
+            ArrDeleteStatus = DeleteStepStatus.Failed, JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
+            SeerrUpdateStatus = DeleteStepStatus.Succeeded, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
+
+        Assert.True(resolved);
+        arr.Verify(a => a.DeleteSeasonFilesAsync(7, 1), Times.Once);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessRetry_GeneralBranch_EpisodeGranularity_UsesSnapshottedNumbers_NotWholeSeriesDelete()
+    {
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true)).ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+        arr.Setup(a => a.DeleteEpisodeFilesAsync(7, 1, 3)).ReturnsAsync(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Episode,
+            ProviderIdType = "tvdbId", ProviderIdValue = "371572", SeasonNumber = 1, EpisodeNumber = 3,
+            ArrDeleteStatus = DeleteStepStatus.Failed, JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
+            SeerrUpdateStatus = DeleteStepStatus.Succeeded, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
+
+        Assert.True(resolved);
+        arr.Verify(a => a.DeleteEpisodeFilesAsync(7, 1, 3), Times.Once);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessRetry_GeneralBranch_SeasonGranularity_MissingSeasonNumberOnLegacyEntry_FailsSafely_NeverCallsWholeSeriesDelete()
+    {
+        // Regression test: a retry-queue entry persisted before this fix shipped deserializes
+        // SeasonNumber as null (the field didn't exist yet). Retrying it must never fall back to
+        // a whole-series delete -- that would silently reproduce the exact bug this fix resolves,
+        // against a real series, on an unrelated (post-upgrade retry) code path.
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true)).ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Season,
+            ProviderIdType = "tvdbId", ProviderIdValue = "371572", SeasonNumber = null,
+            ArrDeleteStatus = DeleteStepStatus.Failed, JellyfinCleanupStatus = DeleteStepStatus.Pending,
+            SeerrUpdateStatus = DeleteStepStatus.Pending, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
+
+        Assert.False(resolved);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+        arr.Verify(a => a.DeleteSeasonFilesAsync(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+        accessor.Verify(a => a.DeleteItem(It.IsAny<Guid>(), out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessRetry_GeneralBranch_EpisodeGranularity_MissingEpisodeNumberOnLegacyEntry_FailsSafely_NeverCallsWholeSeriesDelete()
+    {
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true)).ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Episode,
+            ProviderIdType = "tvdbId", ProviderIdValue = "371572", SeasonNumber = 1, EpisodeNumber = null,
+            ArrDeleteStatus = DeleteStepStatus.Failed, JellyfinCleanupStatus = DeleteStepStatus.Pending,
+            SeerrUpdateStatus = DeleteStepStatus.Pending, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
+
+        Assert.False(resolved);
+        arr.Verify(a => a.DeleteAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+        arr.Verify(a => a.DeleteEpisodeFilesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
 }
