@@ -7,6 +7,15 @@
     "name": "ArrDeleteSync",
     "overview": "Coordinates media deletions across your arr stack and request platform.",
     "owner": "perrin-g",
-    "versions": []
+    "versions": [
+      {
+        "checksum": "176ea27348b30a43749a22499da6bc9f",
+        "changelog": "",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/perrin-g/arr-delete-sync/releases/download/v1.1.0/ArrDeleteSync_1.1.0.0.zip",
+        "timestamp": "2026-07-11T00:36:49.0000000Z",
+        "version": "1.1.0.0"
+      }
+    ]
   }
 ]
