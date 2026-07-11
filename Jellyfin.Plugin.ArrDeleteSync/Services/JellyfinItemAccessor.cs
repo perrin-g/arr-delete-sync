@@ -60,6 +60,7 @@ public class JellyfinItemAccessor : IJellyfinItemAccessor
         {
             info.SeriesItemId = season.SeriesId;
             info.SeasonNumber = season.IndexNumber;
+            info.SeriesName = season.SeriesName;
             if (season.Series?.ProviderIds.TryGetValue("Tvdb", out var seriesTvdb) == true)
             {
                 info.SeriesTvdbId = seriesTvdb;
@@ -75,6 +76,8 @@ public class JellyfinItemAccessor : IJellyfinItemAccessor
             info.SeriesItemId = episode.SeriesId;
             info.SeasonNumber = episode.ParentIndexNumber;
             info.EpisodeNumber = episode.IndexNumber;
+            info.SeriesName = episode.SeriesName;
+            info.SeasonName = episode.SeasonName;
             if (episode.Series?.ProviderIds.TryGetValue("Tvdb", out var epSeriesTvdb) == true)
             {
                 info.SeriesTvdbId = epSeriesTvdb;

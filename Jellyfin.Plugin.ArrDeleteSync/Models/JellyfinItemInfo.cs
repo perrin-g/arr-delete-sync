@@ -15,6 +15,8 @@ public class JellyfinItemInfo
     public Guid? SeriesItemId { get; set; }
     public string? SeriesTvdbId { get; set; }
     public string? SeriesTmdbId { get; set; }
+    public string? SeriesName { get; set; }
+    public string? SeasonName { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
 }

@@ -32,6 +32,36 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         _excludedLibraryNames = excludedLibraryNames ?? Array.Empty<string>();
     }
 
+    // Season/Episode items only carry their own bare Jellyfin name (e.g. "Season 2") -- meaningless
+    // on its own in the Audit Log/Retry Queue once separated from the accordion's visual nesting.
+    // A prior fix (commit 76e69dd) qualified this name, but only client-side in deleteManager.html's
+    // ephemeral bulk-confirm/results screens -- the POST to /delete never sends a display name at
+    // all, so the server independently resolved the bare name and persisted THAT into
+    // AuditLogEntry/RetryQueueEntry.ItemDisplayName, which is what actually shows up on reload.
+    // Building the qualified name here, once, means every persisted record gets it consistently,
+    // regardless of which client asked for the delete. Same "-" separator as the JS version for
+    // consistency, though the two are independent implementations, not shared code.
+    private static string BuildQualifiedItemName(JellyfinItemInfo? item)
+    {
+        if (item == null)
+        {
+            return "(deleted)";
+        }
+
+        var ancestors = new List<string>();
+        if (!string.IsNullOrEmpty(item.SeriesName))
+        {
+            ancestors.Add(item.SeriesName);
+        }
+
+        if (!string.IsNullOrEmpty(item.SeasonName))
+        {
+            ancestors.Add(item.SeasonName);
+        }
+
+        return ancestors.Count > 0 ? string.Join(" - ", ancestors) + " - " + item.Name : item.Name;
+    }
+
     // Shared by ExecuteDeleteAsync's four failure branches, which otherwise each repeat the same
     // six common fields with only status/error/retry-timing differing.
     private static RetryQueueEntry MakeRetryEntry(
@@ -194,7 +224,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         // used to run before the item was ever looked up, showing "unknown" for every entry
         // blocked by a tripped breaker.
         var itemInfo = _itemAccessor.GetItem(request.JellyfinItemId);
-        var itemName = itemInfo?.Name ?? "(deleted)";
+        var itemName = BuildQualifiedItemName(itemInfo);
 
         if (_circuitBreaker.IsTripped)
         {

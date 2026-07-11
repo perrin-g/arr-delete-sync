@@ -577,6 +577,53 @@ public class DeleteOrchestratorExecuteTests
     }
 
     [Fact]
+    public async Task Execute_SeasonDelete_AuditLogQualifiesDisplayName_WithSeriesName()
+    {
+        // Regression test: the audit log (and retry queue) persisted the bare Jellyfin name
+        // ("Season 2") for Season/Episode items -- the qualified "Show - Season 2" name from
+        // commit 76e69dd only ever existed client-side, in deleteManager.html's ephemeral
+        // bulk-confirm/results screens, and was never sent to or stored by the server. Reloading
+        // the Audit Log (or looking at the Retry Queue after a page refresh) showed just "Season
+        // 2" with no indication of which show, reproduced live.
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "Season 2", Granularity = DeleteGranularity.Season,
+            SeriesName = "Motherland: Fort Salem", TvdbId = "371572", SeasonNumber = null, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Season });
+
+        audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e => e.ItemDisplayName == "Motherland: Fort Salem - Season 2")), Times.Once);
+    }
+
+    [Fact]
+    public async Task Execute_EpisodeDelete_AuditLogQualifiesDisplayName_WithSeriesAndSeasonName()
+    {
+        var itemId = Guid.NewGuid();
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
+        {
+            Id = itemId, Name = "Battle Buddies", Granularity = DeleteGranularity.Episode,
+            SeriesName = "Motherland: Fort Salem", SeasonName = "Season 2",
+            TvdbId = "371572", SeasonNumber = 2, EpisodeNumber = null, HasPhysicalPath = true
+        });
+        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
+            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+
+        await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Episode });
+
+        audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e => e.ItemDisplayName == "Motherland: Fort Salem - Season 2 - Battle Buddies")), Times.Once);
+    }
+
+    [Fact]
     public async Task Execute_Blocks_WhenItemBelongsToExcludedLibrary()
     {
         // Security hardening: the Delete Manager UI hides excluded-library items from its list,
