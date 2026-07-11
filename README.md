@@ -16,6 +16,7 @@ When you delete a movie or TV show from Jellyfin, **ArrDeleteSync** coordinates 
 - **Audit log** — Full history of all delete actions with 15-day retention; searchable via the UI
 - **Secure API keys** — Keys are encrypted and never stored in plaintext on disk
 - **Admin-only access** — All operations require Jellyfin admin elevation
+- **Library exclusion** — Hide curated/proxy libraries (e.g. a Discover-style bridge library with no real files) from the Delete Manager, enforced server-side as well as in the UI
 
 ## How It Works
 
@@ -66,6 +67,7 @@ Navigate to **Dashboard → Plugins → ArrDeleteSync Settings** to configure:
 | **Circuit Breaker Threshold** | 5 | Consecutive failures within the window before tripping |
 | **Circuit Breaker Window (minutes)** | 15 | Time window for consecutive failure tracking |
 | **Audit Log Retention (days)** | 15 | How long to keep deletion audit logs |
+| **Excluded Libraries** | (empty) | Comma-separated library names (e.g. `Discover`) to hide from the Delete Manager's Movies/TV lists — also rejected server-side if a delete is requested for one of their items directly |
 
 **API key security:** Keys are encrypted using Jellyfin's data protection API and never stored in plaintext. The encryption keyring is kept separate from the configuration file for additional security.
 
@@ -128,6 +130,7 @@ Navigate to **Dashboard → ArrDeleteSync Settings**:
 
 Navigate to **Dashboard → Delete Manager**:
 
+- Movies/TV lists automatically exclude any library named in **Excluded Libraries** (see Configuration)
 - Manually retry failed deletions
 - Dismiss items from the retry queue (marks as abandoned, logs the action)
 - View detailed status of each retry entry:
