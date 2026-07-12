@@ -460,8 +460,15 @@
           needsConfirmationItems.forEach(function (item) {
             var row = document.createElement("div");
 
+            // Regression fix: this used to say "Force-deleting will remove the file WITHOUT
+            // syncing arr/Seerr" -- the opposite of what actually happens. Force-delete NEVER
+            // removes the file (Jellyfin's own delete is always catalog-only, arr owns real file
+            // deletion and is never contacted for a force-delete) and NEVER touches arr/Seerr at
+            // all -- Sonarr/Radarr keep monitoring and tracking the item exactly as before.
+            // Reproduced live: the old wording implied the file would be gone, contradicting the
+            // Results line's own "(file NOT deleted...)" text right after.
             var reasonText = !item.resolution.HasUsableProviderId
-              ? "Not identified in Jellyfin (no usable provider ID). Force-deleting will remove the file WITHOUT syncing arr/Seerr."
+              ? "Not identified in Jellyfin (no usable provider ID). Force-deleting only removes it from Jellyfin's library — the file stays on disk (you'll need to delete it yourself) and arr/Seerr are never contacted, so Sonarr/Radarr keep tracking and monitoring it exactly as before."
               : "Deleting " + item.granularity + "-level items is irreversible — recovery requires re-requesting through Seerr.";
             var reasonEl = document.createElement("div");
             reasonEl.textContent = item.name + ": " + reasonText;
@@ -549,13 +556,19 @@
                 text = item.name + ": Queued for retry";
               } else if (outcome.JellyfinCleanedUp === false) {
                 text = item.name + ": Cleanup failed — check Audit Log for details";
+              } else if (outcome.RequiresManualFileCleanup) {
+                // Regression fix: this used to say "item: Deleted (file NOT deleted...)" -- reading
+                // as self-contradictory ("deleted" immediately followed by "not deleted"). This is
+                // force-delete/untracked-content territory: only Jellyfin's catalog entry is gone,
+                // arr/Seerr were never contacted at all (Sonarr/Radarr keep tracking it unchanged),
+                // and the real file is untouched -- state that plainly instead of implying a normal
+                // delete happened with one asterisk.
+                text = item.name + ": Removed from Jellyfin only — arr/Seerr were never contacted, so Sonarr/Radarr still track it as before.";
+                text += outcome.FilePath
+                  ? " File NOT deleted — remove manually at: " + outcome.FilePath
+                  : " File NOT deleted — path unknown, check the library folder manually.";
               } else {
                 text = item.name + ": Deleted";
-                if (outcome.RequiresManualFileCleanup) {
-                  text += outcome.FilePath
-                    ? " (file NOT deleted — remove manually at: " + outcome.FilePath + ")"
-                    : " (file NOT deleted — path unknown, check the library folder manually)";
-                }
               }
               // Distinct from outcome.BlockedReason (which only fires when the breaker was
               // ALREADY tripped before this call even started) -- this is the call whose OWN

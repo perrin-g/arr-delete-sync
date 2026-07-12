@@ -153,7 +153,7 @@ Accessible from the Delete Manager page:
 ### Untracked Content
 
 - If an item has no TVDB/TMDB ID in Jellyfin, the plugin can't verify arr tracking
-- **Force delete** option removes the item from Jellyfin anyway, but **the file remains on disk** — you must clean it up manually
+- **Force delete** option removes the item from Jellyfin's catalog only — **the file remains on disk** (you must delete it manually) and **arr/Seerr are never contacted** (Sonarr/Radarr keep tracking and monitoring it exactly as before)
 - Useful for orphaned catalog entries that never made it to arr
 
 ### Episode-Level Granularity
