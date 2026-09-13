@@ -74,7 +74,7 @@ Navigate to **Dashboard → Plugins → ArrDeleteSync Settings** to configure:
 
 ## Requirements
 
-- **Jellyfin 10.11.x** or compatible
+- **Jellyfin 12.0.x** or compatible
 - **Radarr** and/or **Sonarr** (at least one required)
 - **Seerr** (optional; omit configuration to skip request approval updates)
 - API keys with read/write permissions in your arr/Seerr instances
@@ -213,7 +213,7 @@ Search for `ArrDeleteSync` to isolate plugin messages.
 
 ## Development & Contributing
 
-The plugin is written in C# / .NET 9 and compiled against Jellyfin 10.11.x APIs. See the repository for unit tests and architecture details.
+The plugin is written in C# / .NET 10 and compiled against Jellyfin 12.0.x APIs. See the repository for unit tests and architecture details.
 
 ---
 
