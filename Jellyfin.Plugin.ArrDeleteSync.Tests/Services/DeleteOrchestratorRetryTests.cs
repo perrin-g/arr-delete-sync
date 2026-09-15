@@ -254,6 +254,59 @@ public class DeleteOrchestratorRetryTests
     }
 
     [Fact]
+    public async Task ProcessRetry_GeneralBranch_SeasonGranularity_SeerrFailed_UsesStoredSeerrMediaId()
+    {
+        // Regression test: the old logic gated the Seerr retry on entry.ProviderIdType == "tmdbId",
+        // but Series/Season/Episode entries always carry "tvdbId" (the arr-side provider id) --
+        // meaning this branch could never fire for any TV content at all, reproduced by inspection
+        // (no code path ever sets ProviderIdType to "tmdbId" for isSeries). Storing the resolved
+        // SeerrMediaId directly on the entry (captured once, during the original ResolveAsync call)
+        // removes the need to re-derive a TMDB id from a snapshotted TVDB id on every retry.
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        seerr.Setup(s => s.MarkPartiallyAvailableAsync(99)).ReturnsAsync(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Season,
+            ProviderIdType = "tvdbId", ProviderIdValue = "371572", SeasonNumber = 1, SeerrMediaId = 99,
+            ArrDeleteStatus = DeleteStepStatus.Succeeded, JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
+            SeerrUpdateStatus = DeleteStepStatus.Failed, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
+
+        Assert.True(resolved);
+        seerr.Verify(s => s.MarkPartiallyAvailableAsync(99), Times.Once);
+        seerr.Verify(s => s.UpdateAvailabilityAsync(It.IsAny<int>()), Times.Never);
+        seerr.Verify(s => s.FindByTmdbIdAsync(It.IsAny<int>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessRetry_GeneralBranch_SeerrFailed_NoStoredSeerrMediaId_LegacyEntry_FailsSafeAsResolved()
+    {
+        // Legacy entries persisted before SeerrMediaId existed on the model deserialize it as
+        // null -- must fail safe (treated as nothing further to retry) rather than throw or block
+        // forever on a step that can never succeed.
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Movie,
+            ProviderIdType = "tmdbId", ProviderIdValue = "603", SeerrMediaId = null,
+            ArrDeleteStatus = DeleteStepStatus.Succeeded, JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
+            SeerrUpdateStatus = DeleteStepStatus.Failed, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        var resolved = await orchestrator.ProcessRetryEntryAsync(entry);
+
+        Assert.True(resolved);
+        seerr.Verify(s => s.UpdateAvailabilityAsync(It.IsAny<int>()), Times.Never);
+        seerr.Verify(s => s.MarkPartiallyAvailableAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ProcessRetry_GeneralBranch_EpisodeGranularity_MissingEpisodeNumberOnLegacyEntry_FailsSafely_NeverCallsWholeSeriesDelete()
     {
         var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();

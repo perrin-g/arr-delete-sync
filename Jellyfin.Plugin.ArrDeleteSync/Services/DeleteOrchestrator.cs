@@ -88,6 +88,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             Granularity = granularity,
             ProviderIdType = resolution.ProviderIdType,
             ProviderIdValue = resolution.ProviderIdValue,
+            SeerrMediaId = resolution.SeerrMediaId,
             SeasonNumber = seasonNumber,
             EpisodeNumber = episodeNumber,
             ArrDeleteStatus = arrStatus,
@@ -126,6 +127,19 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 await client.DeleteEpisodeFilesAsync(arrInternalId, seasonNumber.Value, episodeNumber.Value),
             DeleteGranularity.Season or DeleteGranularity.Episode => false,
             _ => await client.DeleteAsync(arrInternalId, isSeries)
+        };
+    }
+
+    // Season/Episode deletes only remove part of a series' content -- routing them through
+    // UpdateAvailabilityAsync (Jellyseerr's whole-record DELETE) would wipe the entire series'
+    // Seerr availability even though other seasons are untouched. Single choke point mirroring
+    // DeleteArrContentAsync's reasoning, so this and any future call site can't drift apart.
+    private static async Task<bool> UpdateSeerrAvailabilityAsync(ISeerrClient client, DeleteGranularity granularity, int seerrMediaId)
+    {
+        return granularity switch
+        {
+            DeleteGranularity.Season or DeleteGranularity.Episode => await client.MarkPartiallyAvailableAsync(seerrMediaId),
+            _ => await client.UpdateAvailabilityAsync(seerrMediaId)
         };
     }
 
@@ -372,7 +386,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         bool seerrUpdated = true;
         if (resolution.SeerrMediaId.HasValue)
         {
-            seerrUpdated = await _seerrClient.UpdateAvailabilityAsync(resolution.SeerrMediaId.Value);
+            seerrUpdated = await UpdateSeerrAvailabilityAsync(_seerrClient, request.Granularity, resolution.SeerrMediaId.Value);
         }
 
         if (!seerrUpdated)
@@ -483,22 +497,21 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         var seerrOk = entry.SeerrUpdateStatus == DeleteStepStatus.Succeeded;
         if (arrOk && jellyfinOk && !seerrOk)
         {
-            if (entry.ProviderIdType == "tmdbId" && int.TryParse(entry.ProviderIdValue, out var tmdbInt))
+            // Regression fix: this used to re-derive a Seerr lookup key from entry.ProviderIdType,
+            // gated on it equaling "tmdbId" -- but Series/Season/Episode entries always carry
+            // "tvdbId" (the *arr*-side provider id; see ResolveAsync), so that check could never
+            // match any TV content and this branch was dead code for every series/season/episode
+            // retry, silently marking seerrOk=true below without ever calling Seerr. SeerrMediaId
+            // is captured once, directly on the entry, at the point resolution first ran (see
+            // MakeRetryEntry) -- no need to re-derive anything from a snapshotted provider id.
+            if (entry.SeerrMediaId.HasValue)
             {
-                var seerrLookup = await _seerrClient.FindByTmdbIdAsync(tmdbInt, isSeries);
-                if (seerrLookup.State == ArrTrackingState.ConfirmedNotTracked)
-                {
-                    seerrOk = true;
-                }
-                else if (seerrLookup.State == ArrTrackingState.Tracked && seerrLookup.MediaId.HasValue)
-                {
-                    seerrOk = await _seerrClient.UpdateAvailabilityAsync(seerrLookup.MediaId.Value);
-                }
+                seerrOk = await UpdateSeerrAvailabilityAsync(_seerrClient, entry.Granularity, entry.SeerrMediaId.Value);
             }
             else
             {
-                // TVDB-only fallback case (already best-effort skip-logged) or no Seerr record
-                // at all — nothing further to retry.
+                // No Seerr id was ever resolved (untracked content), or this is a legacy entry
+                // persisted before SeerrMediaId existed on the model — nothing further to retry.
                 seerrOk = true;
             }
         }

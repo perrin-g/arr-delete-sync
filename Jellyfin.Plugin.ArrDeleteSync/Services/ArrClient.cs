@@ -1,6 +1,7 @@
 using System;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ArrDeleteSync.Models;
 
@@ -174,7 +175,19 @@ public class ArrClient : IArrClient
         // search/RSS sync can silently re-download exactly what was just deleted, undoing it.
         // Includes not-yet-aired episodes too, since the whole season is being deleted.
         var episodeIds = seasonEpisodes.Select(e => e.Id).Where(id => id != 0).ToList();
-        return await SetEpisodesMonitoredAsync(episodeIds, monitored: false);
+        if (!await SetEpisodesMonitoredAsync(episodeIds, monitored: false))
+        {
+            return false;
+        }
+
+        // Unmonitoring every episode does NOT unmonitor the season itself -- Sonarr's Series page
+        // shows a season-level "Monitored" badge driven by a separate `seasons[].monitored` flag
+        // on the series record, independent of the per-episode flags above. Confirmed live: after
+        // this exact code path ran, Sonarr still showed the deleted season as Monitored, and
+        // Jellyfin's own library scan re-surfaced it as a phantom empty season. Only the
+        // series-level flag stays untouched here (deliberately, so the show can still be searched
+        // for future seasons) -- this call is scoped to the one season being deleted.
+        return await SetSeasonMonitoredAsync(seriesInternalId, seasonNumber, monitored: false);
     }
 
     // Deletes the single file backing one episode. The caller already verifies (via
@@ -287,6 +300,56 @@ public class ArrClient : IArrClient
             request.Headers.Add("X-Api-Key", _apiKey);
             using var response = await _httpClient.SendAsync(request);
             return response.IsSuccessStatusCode;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    // Sonarr has no bulk season-monitor endpoint the way it does for episodes -- the season's
+    // `monitored` flag lives only on the full series record's `seasons` array, so it must be
+    // fetched, patched in place, and written back whole via PUT /api/v3/series/{id}. Parsed as a
+    // loosely-typed JsonNode rather than a strongly-typed model so this round-trips every other
+    // field on the series record untouched, regardless of what Sonarr's schema contains.
+    private async Task<bool> SetSeasonMonitoredAsync(int seriesInternalId, int seasonNumber, bool monitored)
+    {
+        var seriesUrl = $"{_baseUrl}/api/v3/series/{seriesInternalId}";
+
+        try
+        {
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, seriesUrl);
+            getRequest.Headers.Add("X-Api-Key", _apiKey);
+            using var getResponse = await _httpClient.SendAsync(getRequest);
+
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            var seriesBody = await getResponse.Content.ReadAsStringAsync();
+            var series = JsonNode.Parse(seriesBody)?.AsObject();
+            var seasons = series?["seasons"]?.AsArray();
+            if (seasons == null)
+            {
+                return false;
+            }
+
+            var season = seasons.FirstOrDefault(s => s?["seasonNumber"]?.GetValue<int>() == seasonNumber);
+            if (season == null)
+            {
+                return false; // season not found on the series -- anomaly, don't silently no-op
+            }
+
+            season["monitored"] = monitored;
+
+            using var putRequest = new HttpRequestMessage(HttpMethod.Put, seriesUrl)
+            {
+                Content = new StringContent(series!.ToJsonString(), System.Text.Encoding.UTF8, "application/json")
+            };
+            putRequest.Headers.Add("X-Api-Key", _apiKey);
+            using var putResponse = await _httpClient.SendAsync(putRequest);
+            return putResponse.IsSuccessStatusCode;
         }
         catch (Exception)
         {
