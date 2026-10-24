@@ -124,19 +124,6 @@ public class SeerrClientTests
     }
 
     [Fact]
-    public async Task MarkPartiallyAvailable_CallsPostPartialEndpoint()
-    {
-        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK));
-        var client = new SeerrClient(new HttpClient(handler), "http://seerr:5055", "fakekey");
-
-        var success = await client.MarkPartiallyAvailableAsync(11);
-
-        Assert.True(success);
-        Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
-        Assert.Contains("/api/v1/media/11/partial", handler.LastRequest.RequestUri!.ToString());
-    }
-
-    [Fact]
     public async Task ApiKey_IsSentAsHeader_NeverAsQueryString()
     {
         // Parity with ArrClientTests' equivalent — this constraint applies to every HTTP call

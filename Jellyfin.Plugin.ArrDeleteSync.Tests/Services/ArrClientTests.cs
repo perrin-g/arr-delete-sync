@@ -215,23 +215,9 @@ public class ArrClientTests
         var deletedIds = new List<int>();
         var handler = new FakeHttpMessageHandler(req =>
         {
-            var url = req.RequestUri!.ToString();
             if (req.Method == HttpMethod.Delete)
             {
                 deletedIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            if (req.Method == HttpMethod.Get && url.Contains("/series/"))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"id\":7,\"seasons\":[{\"seasonNumber\":1,\"monitored\":true}]}")
-                };
-            }
-
-            if (req.Method == HttpMethod.Put)
-            {
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
 
@@ -257,23 +243,9 @@ public class ArrClientTests
         var deletedIds = new List<int>();
         var handler = new FakeHttpMessageHandler(req =>
         {
-            var url = req.RequestUri!.ToString();
             if (req.Method == HttpMethod.Delete)
             {
                 deletedIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            if (req.Method == HttpMethod.Get && url.Contains("/series/"))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"id\":7,\"seasons\":[{\"seasonNumber\":1,\"monitored\":true}]}")
-                };
-            }
-
-            if (req.Method == HttpMethod.Put)
-            {
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
 
@@ -296,26 +268,9 @@ public class ArrClientTests
     [Fact]
     public async Task DeleteSeasonFiles_ReturnsTrue_WhenSeasonHasNoFiles()
     {
-        var handler = new FakeHttpMessageHandler(req =>
+        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Get && url.Contains("/series/"))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"id\":7,\"seasons\":[{\"seasonNumber\":1,\"monitored\":true}]}")
-                };
-            }
-
-            if (req.Method == HttpMethod.Put)
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("[{\"seasonNumber\":2,\"episodeNumber\":1,\"episodeFileId\":200}]")
-            };
+            Content = new StringContent("[{\"seasonNumber\":2,\"episodeNumber\":1,\"episodeFileId\":200}]")
         });
         var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
 
@@ -350,99 +305,6 @@ public class ArrClientTests
 
         Assert.False(success);
         Assert.Equal(new[] { 100, 101 }, deletedIds.OrderBy(x => x));
-    }
-
-    [Fact]
-    public async Task DeleteSeasonFiles_UnmonitorsSeasonItself_NotJustEpisodes()
-    {
-        // Regression test: unmonitoring every episode in a season does NOT unmonitor the season
-        // itself in Sonarr -- the season-level "Monitored" badge is driven by a separate
-        // seasons[].monitored flag on the series record, independent of per-episode flags.
-        // Confirmed live: after a season delete, Sonarr still showed the deleted season as
-        // Monitored, and Jellyfin's own library scan re-surfaced it as a phantom empty season.
-        string? putBody = null;
-        var handler = new FakeHttpMessageHandler(req =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Delete)
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            if (req.Method == HttpMethod.Get && url.Contains("/episode?"))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("[{\"id\":10,\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]")
-                };
-            }
-
-            if (req.Method == HttpMethod.Put && url.Contains("/episode/monitor"))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            if (req.Method == HttpMethod.Get && url.Contains("/series/7"))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"id\":7,\"seasons\":[{\"seasonNumber\":1,\"monitored\":true},{\"seasonNumber\":2,\"monitored\":true}]}")
-                };
-            }
-
-            if (req.Method == HttpMethod.Put && url.Contains("/series/7"))
-            {
-                putBody = req.Content!.ReadAsStringAsync().Result;
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            throw new InvalidOperationException($"Unexpected request: {req.Method} {url}");
-        });
-        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
-
-        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
-
-        Assert.True(success);
-        Assert.NotNull(putBody);
-        using var doc = JsonDocument.Parse(putBody!);
-        var seasons = doc.RootElement.GetProperty("seasons");
-        Assert.False(seasons[0].GetProperty("monitored").GetBoolean()); // season 1 unmonitored
-        Assert.True(seasons[1].GetProperty("monitored").GetBoolean()); // season 2 untouched
-    }
-
-    [Fact]
-    public async Task DeleteSeasonFiles_ReturnsFalse_WhenSeasonMonitorUpdateFails_SeasonNotFoundOnSeries()
-    {
-        // Season-monitor failure here (rather than the episode-file/monitor steps, which already
-        // have their own coverage) -- an anomaly like this must fail closed rather than silently
-        // report the whole season delete as successful when Sonarr's own series record doesn't
-        // agree the season exists.
-        var handler = new FakeHttpMessageHandler(req =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Delete)
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK);
-            }
-
-            if (req.Method == HttpMethod.Get && url.Contains("/series/"))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"id\":7,\"seasons\":[{\"seasonNumber\":2,\"monitored\":true}]}")
-                };
-            }
-
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100}]")
-            };
-        });
-        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
-
-        var success = await client.DeleteSeasonFilesAsync(seriesInternalId: 7, seasonNumber: 1);
-
-        Assert.False(success);
     }
 
     [Fact]
@@ -536,18 +398,15 @@ public class ArrClientTests
         string episodeListJson,
         List<int> deletedFileIds,
         List<string> monitorRequestBodies,
-        bool monitorShouldSucceed = true,
-        string seriesJson = "{\"id\":7,\"seasons\":[{\"seasonNumber\":1,\"monitored\":true}]}")
+        bool monitorShouldSucceed = true)
     {
-        var url = req.RequestUri!.ToString();
-
         if (req.Method == HttpMethod.Delete)
         {
             deletedFileIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
 
-        if (req.Method == HttpMethod.Put && url.Contains("/episode/monitor"))
+        if (req.Method == HttpMethod.Put)
         {
             // Must read the body here, synchronously within the routing callback -- ArrClient
             // disposes the HttpRequestMessage (and its Content) via `using` as soon as SendAsync
@@ -555,18 +414,6 @@ public class ArrClientTests
             // ObjectDisposedException.
             monitorRequestBodies.Add(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
             return new HttpResponseMessage(monitorShouldSucceed ? HttpStatusCode.OK : HttpStatusCode.InternalServerError);
-        }
-
-        // Season-level monitor update (GET-then-PUT the whole series record) -- reached only
-        // after the per-episode monitor call above already succeeded.
-        if (req.Method == HttpMethod.Get && url.Contains("/series/"))
-        {
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(seriesJson) };
-        }
-
-        if (req.Method == HttpMethod.Put && url.Contains("/series/"))
-        {
-            return new HttpResponseMessage(HttpStatusCode.OK);
         }
 
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(episodeListJson) };

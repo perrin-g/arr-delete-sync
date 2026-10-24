@@ -168,29 +168,4 @@ public class SeerrClient : ISeerrClient
             return false;
         }
     }
-
-    // Season/Episode-level deletes only remove part of a show's content -- calling
-    // UpdateAvailabilityAsync's whole-record DELETE for these would wipe the entire series'
-    // request/availability record even though other seasons are untouched. Jellyseerr's API has
-    // no season-scoped "mark unavailable" endpoint (confirmed against server/routes/media.ts:
-    // POST /:id/:status only accepts a per-season seasons[] array for the "available" status, and
-    // both DELETE endpoints are whole-record only), so PARTIALLY_AVAILABLE is the closest accurate
-    // status: it signals "some content missing" without resetting service data or losing the
-    // other seasons' own availability state.
-    public async Task<bool> MarkPartiallyAvailableAsync(int seerrMediaId)
-    {
-        var url = $"{_baseUrl}/api/v1/media/{seerrMediaId}/partial";
-
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Headers.Add("X-Api-Key", _apiKey);
-            using var response = await _httpClient.SendAsync(request);
-            return response.IsSuccessStatusCode;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
 }

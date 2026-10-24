@@ -60,28 +60,6 @@ public class SerializationTests
     }
 
     [Fact]
-    public void RetryQueueEntry_RoundTrips_ThroughJson_WithSeerrMediaId()
-    {
-        var entry = new RetryQueueEntry
-        {
-            Id = Guid.NewGuid(),
-            JellyfinItemId = Guid.NewGuid(),
-            Granularity = DeleteGranularity.Season,
-            ProviderIdType = "tvdbId",
-            ProviderIdValue = "371572",
-            SeasonNumber = 1,
-            SeerrMediaId = 99,
-            NextRetryAtUtc = new DateTime(2026, 7, 3, 12, 0, 0, DateTimeKind.Utc)
-        };
-
-        var json = JsonSerializer.Serialize(entry);
-        var roundTripped = JsonSerializer.Deserialize<RetryQueueEntry>(json);
-
-        Assert.NotNull(roundTripped);
-        Assert.Equal(99, roundTripped!.SeerrMediaId);
-    }
-
-    [Fact]
     public void AuditLogEntry_RoundTrips_ThroughJson()
     {
         var entry = new AuditLogEntry

@@ -9,5 +9,4 @@ public interface ISeerrClient
     Task<SeerrLookupResult?> SearchByTitleAsync(string title, int? year, bool isTv);
     Task<bool> VerifyTvdbIdAsync(int tmdbTvId, int expectedTvdbId);
     Task<bool> UpdateAvailabilityAsync(int seerrMediaId);
-    Task<bool> MarkPartiallyAvailableAsync(int seerrMediaId);
 }

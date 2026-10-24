@@ -8,7 +8,6 @@ public class RetryQueueEntry
     public required DeleteGranularity Granularity { get; set; }
     public string? ProviderIdType { get; set; }
     public string? ProviderIdValue { get; set; }
-    public int? SeerrMediaId { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public DeleteStepStatus ArrDeleteStatus { get; set; } = DeleteStepStatus.Pending;

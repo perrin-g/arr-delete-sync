@@ -457,39 +457,6 @@ public class DeleteOrchestratorExecuteTests
     }
 
     [Fact]
-    public async Task Execute_SeasonDelete_MarksSeerrPartiallyAvailable_NotFullReset()
-    {
-        // Regression test: Season/Episode deletes used to call UpdateAvailabilityAsync (Jellyseerr's
-        // whole-record DELETE), wiping the entire series' Seerr availability even though only one
-        // season's files were removed -- reproduced live, "Sonarr still tracks the series but Seerr
-        // shows it fully unavailable/requestable again after a single season delete."
-        var itemId = Guid.NewGuid();
-        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
-        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
-        {
-            Id = itemId, Name = "Season 1", Granularity = DeleteGranularity.Season,
-            TvdbId = "371572", SeriesTmdbId = "1408", SeasonNumber = 1, HasPhysicalPath = true
-        });
-        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
-            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
-        seerr.Setup(s => s.FindByTmdbIdAsync(1408, true))
-            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 99 });
-        arr.Setup(a => a.DeleteSeasonFilesAsync(7, 1)).ReturnsAsync(true);
-        accessor.Setup(a => a.DeleteItem(itemId, out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny))
-            .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
-            .Returns(true);
-        seerr.Setup(s => s.MarkPartiallyAvailableAsync(99)).ReturnsAsync(true);
-
-        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
-
-        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Season });
-
-        Assert.True(outcome.SeerrUpdated);
-        seerr.Verify(s => s.MarkPartiallyAvailableAsync(99), Times.Once);
-        seerr.Verify(s => s.UpdateAvailabilityAsync(It.IsAny<int>()), Times.Never);
-    }
-
-    [Fact]
     public async Task Execute_SeriesDelete_StillCallsWholeSeriesDeleteAsync()
     {
         var itemId = Guid.NewGuid();
@@ -514,38 +481,6 @@ public class DeleteOrchestratorExecuteTests
         Assert.True(outcome.ArrDeleted);
         arr.Verify(a => a.DeleteAsync(7, true), Times.Once);
         arr.Verify(a => a.DeleteSeasonFilesAsync(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task Execute_SeriesDelete_StillCallsFullSeerrReset_NotPartial()
-    {
-        // Companion regression pin to Execute_SeasonDelete_MarksSeerrPartiallyAvailable_NotFullReset:
-        // a whole-series delete really does remove everything, so the full Seerr reset remains
-        // correct here -- only Season/Episode should ever divert to MarkPartiallyAvailableAsync.
-        var itemId = Guid.NewGuid();
-        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
-        accessor.Setup(a => a.GetItem(itemId)).Returns(new JellyfinItemInfo
-        {
-            Id = itemId, Name = "The Pitt", Granularity = DeleteGranularity.Series,
-            TvdbId = "371572", SeriesTmdbId = "1408", HasPhysicalPath = true
-        });
-        arr.Setup(a => a.FindByProviderIdAsync("tvdbId", "371572", true))
-            .ReturnsAsync(new ArrLookupResult { State = ArrTrackingState.Tracked, InternalId = 7 });
-        seerr.Setup(s => s.FindByTmdbIdAsync(1408, true))
-            .ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 99 });
-        arr.Setup(a => a.DeleteAsync(7, true)).ReturnsAsync(true);
-        accessor.Setup(a => a.DeleteItem(itemId, out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny))
-            .Callback(new DeleteItemCallback((Guid id, out bool structural, out string? err) => { structural = false; err = null; }))
-            .Returns(true);
-        seerr.Setup(s => s.UpdateAvailabilityAsync(99)).ReturnsAsync(true);
-
-        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
-
-        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = itemId, Granularity = DeleteGranularity.Series });
-
-        Assert.True(outcome.SeerrUpdated);
-        seerr.Verify(s => s.UpdateAvailabilityAsync(99), Times.Once);
-        seerr.Verify(s => s.MarkPartiallyAvailableAsync(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
