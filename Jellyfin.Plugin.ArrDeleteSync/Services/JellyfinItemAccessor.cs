@@ -99,6 +99,26 @@ public class JellyfinItemAccessor : IJellyfinItemAccessor
     // BaseItem in this version). An item can technically belong to more than one library if
     // multiple libraries share an overlapping path; the first is enough to check against an
     // excluded-library name.
+    // Fails safe toward "exists" so a lookup problem hides a series from the followed list rather
+    // than listing (and offering to stop following) something Jellyfin still shows.
+    public bool SeriesExistsWithTvdbId(string tvdbId)
+    {
+        try
+        {
+            var matches = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { BaseItemKind.Series },
+                HasAnyProviderId = new System.Collections.Generic.Dictionary<string, string> { ["Tvdb"] = tvdbId },
+                Recursive = true
+            });
+            return matches.Count > 0;
+        }
+        catch (Exception)
+        {
+            return true;
+        }
+    }
+
     public string? GetLibraryName(Guid itemId)
     {
         var item = _libraryManager.GetItemById(itemId);

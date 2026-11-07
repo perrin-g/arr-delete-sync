@@ -41,6 +41,8 @@ public class ArrDeleteSyncControllerTests
     [InlineData(nameof(ArrDeleteSyncController.TestConnection))]
     [InlineData(nameof(ArrDeleteSyncController.SeriesImpact))]
     [InlineData(nameof(ArrDeleteSyncController.KeepFollowing))]
+    [InlineData(nameof(ArrDeleteSyncController.FollowedSeries))]
+    [InlineData(nameof(ArrDeleteSyncController.StopFollowing))]
     public void EveryAction_RequiresAdminAuthorization(string methodName)
     {
         var method = typeof(ArrDeleteSyncController).GetMethod(methodName);

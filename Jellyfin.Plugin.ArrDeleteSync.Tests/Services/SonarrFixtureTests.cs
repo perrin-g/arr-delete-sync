@@ -44,6 +44,7 @@ public class SonarrFixtureTests
 
             string? body = url switch
             {
+                "/api/v3/series" => Fixture("series-list.json"),
                 "/api/v3/series?tvdbId=401003" => Fixture("lookup-from.json"),
                 "/api/v3/series?tvdbId=75932" => Fixture("lookup-fawlty.json"),
                 "/api/v3/series/20" => Fixture("series-from.json"),
@@ -330,5 +331,92 @@ public class SonarrFixtureTests
         Assert.True(sent["monitored"]!.GetValue<bool>());
         Assert.Equal("all", sent["monitorNewItems"]!.GetValue<string>());
         audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e => e.Action == "FollowNewSeasons" && e.Outcome == "Success")), Times.Once);
+    }
+
+    // ---- followed shows with no episodes ----
+
+    [Fact]
+    public async Task GetAllSeries_ParsesRealList()
+    {
+        var (client, _) = MakeClient();
+
+        var all = await client.GetAllSeriesAsync();
+
+        Assert.Equal(4, all!.Count);
+        var lioness = Assert.Single(all, s => s.Title == "Lioness");
+        Assert.Equal(32, lioness.ArrSeriesId);
+        Assert.True(lioness.Monitored);
+        Assert.Equal(0, lioness.EpisodeFileCount);
+        Assert.Equal("388589", lioness.TvdbId);
+        Assert.Equal(113962, lioness.TmdbId);
+        Assert.False(lioness.Ended);
+        var fawlty = Assert.Single(all, s => s.Title == "Fawlty Towers");
+        Assert.True(fawlty.Ended);
+        Assert.True(fawlty.EpisodeFileCount > 0);
+    }
+
+    [Fact]
+    public async Task FollowedEmpty_ListsMonitoredZeroFileSeries_NotInJellyfin()
+    {
+        var (orchestrator, accessor, _, _) = MakeOrchestrator();
+        accessor.Setup(a => a.SeriesExistsWithTvdbId(It.IsAny<string>())).Returns(false);
+        var rickTvdb = JsonNode.Parse(Fixture("series-list.json"))!.AsArray().First(s => s!["title"]!.GetValue<string>() == "Rick and Morty")!["tvdbId"]!.GetValue<int>().ToString();
+        accessor.Setup(a => a.SeriesExistsWithTvdbId(rickTvdb)).Returns(true); // still has a Jellyfin entry
+
+        var followed = await orchestrator.GetFollowedEmptySeriesAsync();
+
+        Assert.Equal(new[] { "FROM", "Lioness" }, followed.Select(f => f.Title).OrderBy(t => t));
+    }
+
+    [Fact]
+    public async Task StopFollowing_EmptySeries_DeletesFromSonarr_ResetsSeerr_Audits()
+    {
+        var (client, sonarr) = MakeClient();
+        var factory = new Mock<IArrClientFactory>();
+        factory.Setup(f => f.GetClient(true)).Returns(client);
+        var seerr = new Mock<ISeerrClient>();
+        var tmdb = JsonNode.Parse(Fixture("series-from.json"))!["tmdbId"]!.GetValue<int>();
+        seerr.Setup(s => s.FindByTmdbIdAsync(tmdb, true)).ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 9 });
+        seerr.Setup(s => s.UpdateAvailabilityAsync(9)).ReturnsAsync(true);
+        var audit = new Mock<IAuditLogStore>();
+        var orchestrator = new DeleteOrchestrator(new Mock<IJellyfinItemAccessor>().Object, factory.Object, seerr.Object,
+            new Mock<IRetryQueueStore>().Object, audit.Object, new Mock<ICircuitBreaker>().Object);
+
+        var outcome = await orchestrator.StopFollowingAsync(20);
+
+        Assert.True(outcome.Ok);
+        Assert.Contains(sonarr.Deletes, d => d.StartsWith("/api/v3/series/20", StringComparison.Ordinal));
+        seerr.Verify(s => s.UpdateAvailabilityAsync(9), Times.Once);
+        audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e => e.Action == "StopFollowing" && e.Outcome == "Success" && e.ItemDisplayName == "FROM")), Times.Once);
+    }
+
+    [Fact]
+    public async Task StopFollowing_Refuses_WhenSeriesStillHasFiles()
+    {
+        var (client, sonarr) = MakeClient();
+        var factory = new Mock<IArrClientFactory>();
+        factory.Setup(f => f.GetClient(true)).Returns(client);
+        var orchestrator = new DeleteOrchestrator(new Mock<IJellyfinItemAccessor>().Object, factory.Object, new Mock<ISeerrClient>().Object,
+            new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+
+        var outcome = await orchestrator.StopFollowingAsync(8); // Fawlty Towers: has files
+
+        Assert.False(outcome.Ok);
+        Assert.Empty(sonarr.Deletes);
+    }
+
+    [Fact]
+    public async Task StopFollowing_Refuses_WhenCircuitBreakerTripped()
+    {
+        var (client, sonarr) = MakeClient();
+        var factory = new Mock<IArrClientFactory>();
+        factory.Setup(f => f.GetClient(true)).Returns(client);
+        var breaker = new Mock<ICircuitBreaker>();
+        breaker.Setup(b => b.IsTripped).Returns(true);
+        var orchestrator = new DeleteOrchestrator(new Mock<IJellyfinItemAccessor>().Object, factory.Object, new Mock<ISeerrClient>().Object,
+            new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, breaker.Object);
+
+        Assert.False((await orchestrator.StopFollowingAsync(20)).Ok);
+        Assert.Empty(sonarr.Deletes);
     }
 }

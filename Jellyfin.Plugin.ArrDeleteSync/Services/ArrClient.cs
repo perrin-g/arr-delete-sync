@@ -218,6 +218,74 @@ public class ArrClient : IArrClient
             && await SetFollowNewSeasonsAsync(seriesInternalId);
     }
 
+    public async Task<IReadOnlyList<FollowedSeries>?> GetAllSeriesAsync()
+    {
+        var body = await GetBodyAsync($"{_baseUrl}/api/v3/series");
+        if (body == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.EnumerateArray().Select(ParseSeriesSummary).ToList();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    public async Task<FollowedSeries?> GetSeriesSummaryAsync(int seriesInternalId)
+    {
+        var body = await GetBodyAsync($"{_baseUrl}/api/v3/series/{seriesInternalId}");
+        if (body == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return ParseSeriesSummary(doc.RootElement);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static FollowedSeries ParseSeriesSummary(JsonElement s)
+    {
+        var fileCount = s.TryGetProperty("statistics", out var stats) && stats.TryGetProperty("episodeFileCount", out var fc) ? fc.GetInt32() : 0;
+        return new FollowedSeries
+        {
+            ArrSeriesId = s.GetProperty("id").GetInt32(),
+            Title = s.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty,
+            Ended = s.TryGetProperty("status", out var st) && string.Equals(st.GetString(), "ended", StringComparison.OrdinalIgnoreCase),
+            Monitored = s.TryGetProperty("monitored", out var m) && m.ValueKind == JsonValueKind.True,
+            EpisodeFileCount = fileCount,
+            TvdbId = s.TryGetProperty("tvdbId", out var tv) && tv.ValueKind == JsonValueKind.Number && tv.GetInt32() > 0 ? tv.GetInt32().ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
+            TmdbId = s.TryGetProperty("tmdbId", out var tm) && tm.ValueKind == JsonValueKind.Number && tm.GetInt32() > 0 ? tm.GetInt32() : null
+        };
+    }
+
+    private async Task<string?> GetBodyAsync(string url)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("X-Api-Key", _apiKey);
+            using var response = await _httpClient.SendAsync(request);
+            return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync() : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     // Deletes every distinct episode file in the given season, without touching the series or
     // any other season -- unlike DeleteAsync (whole series/movie), used only for Movie/Series
     // granularity. Attempts every file even if one delete fails, rather than stopping at the

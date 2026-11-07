@@ -8,4 +8,5 @@ public interface IJellyfinItemAccessor
     JellyfinItemInfo? GetItem(Guid itemId);
     bool DeleteItem(Guid itemId, out bool isStructuralFailure, out string? error);
     string? GetLibraryName(Guid itemId);
+    bool SeriesExistsWithTvdbId(string tvdbId);
 }

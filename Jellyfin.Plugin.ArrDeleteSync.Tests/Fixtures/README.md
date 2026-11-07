@@ -5,3 +5,5 @@ every live episode delete was blocked.
 
 - `*-from.*`   FROM (series 20, continuing): S1-S4 unmonitored, no files; S5 has one monitored placeholder episode.
 - `*-fawlty.*` Fawlty Towers (series 8, ended): S1+S2 monitored with files; 30 unmonitored specials.
+- `series-list.json` real `GET /api/v3/series` response trimmed to 4 of its entries (entries verbatim):
+  FROM, Lioness, Rick and Morty (monitored, 0 files after keep-series deletes) and Fawlty Towers (has files).

@@ -68,6 +68,20 @@ public class ArrDeleteSyncController : ControllerBase
         return Ok(new { ok });
     }
 
+    // Monitored Sonarr series with no files and no Jellyfin entry ("followed, no episodes yet").
+    [HttpGet("followed-series")]
+    public async Task<ActionResult> FollowedSeries()
+    {
+        return Ok(await _orchestrator.GetFollowedEmptySeriesAsync());
+    }
+
+    // Removes a followed series that has no files from Sonarr (and resets its Seerr entry).
+    [HttpPost("stop-following")]
+    public async Task<ActionResult> StopFollowing([FromQuery] int arrSeriesId)
+    {
+        return Ok(await _orchestrator.StopFollowingAsync(arrSeriesId));
+    }
+
     [HttpGet("retry-queue")]
     public async Task<ActionResult> GetRetryQueue()
     {

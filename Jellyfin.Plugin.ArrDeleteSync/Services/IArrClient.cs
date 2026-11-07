@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ArrDeleteSync.Models;
 
@@ -13,4 +14,6 @@ public interface IArrClient
     Task<SeriesMonitorState?> GetSeriesMonitorStateAsync(int seriesInternalId);
     Task<bool> SetFollowNewSeasonsAsync(int seriesInternalId);
     Task<bool> DeleteAllEpisodeFilesKeepSeriesAsync(int seriesInternalId);
+    Task<IReadOnlyList<FollowedSeries>?> GetAllSeriesAsync();
+    Task<FollowedSeries?> GetSeriesSummaryAsync(int seriesInternalId);
 }

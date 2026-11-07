@@ -134,6 +134,7 @@ Navigate to **Dashboard → Delete Manager**:
 
 - Movies/TV lists automatically exclude any library named in **Excluded Libraries** (see Configuration)
 - When deleting a whole series, or seasons/episodes that empty it of monitored episodes, choose per series whether to remove it entirely or keep following it for new seasons
+- **Followed — no episodes yet:** shows Sonarr still monitors but that have no files (so no Jellyfin entry), e.g. after a keep-series delete, are listed at the bottom of the TV tab as "(monitored)". **Stop following** removes one from Sonarr and resets its Seerr entry (type the name to confirm; refused server-side if the series has files)
 - Manually retry failed deletions
 - Dismiss items from the retry queue (marks as abandoned, logs the action)
 - View detailed status of each retry entry:

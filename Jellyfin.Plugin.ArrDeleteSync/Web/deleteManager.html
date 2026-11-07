@@ -42,6 +42,10 @@
                 <option value="100">100 per page</option>
               </select>
             </div>
+            <div id="FollowedSection" style="display:none; margin-top:1em;">
+              <h3>Followed — no episodes yet</h3>
+              <div id="FollowedList"></div>
+            </div>
           </div>
         </div>
 
@@ -293,6 +297,76 @@
           }).catch(function (err) {
             console.error(err);
             Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
+          });
+          loadFollowedSeries();
+        }
+
+        // Shows Sonarr still follows but which have no files (so no Jellyfin entry, and nothing
+        // in the list above) -- e.g. after a keep-series delete. "Stop following" removes the
+        // series from Sonarr and resets its Seerr entry; the server refuses if it has files.
+        function loadFollowedSeries() {
+          fetchJson("followed-series").then(function (followed) {
+            var section = document.getElementById("FollowedSection");
+            var list = document.getElementById("FollowedList");
+            list.innerHTML = "";
+            section.style.display = (followed && followed.length) ? "block" : "none";
+            (followed || []).forEach(function (series) {
+              var row = document.createElement("div");
+              row.style.margin = "0.25em 0";
+              var label = document.createElement("span");
+              label.textContent = series.Title + (series.Ended ? " (monitored, ended)" : " (monitored)") + " ";
+              row.appendChild(label);
+
+              var stopBtn = document.createElement("button");
+              stopBtn.setAttribute("is", "emby-button");
+              stopBtn.className = "raised";
+              stopBtn.textContent = "Stop following";
+              row.appendChild(stopBtn);
+
+              var confirmRow = document.createElement("div");
+              confirmRow.style.display = "none";
+              var note = document.createElement("div");
+              note.textContent = series.Title + ": series will be removed from Sonarr and its Seerr request reset. Type the name to confirm.";
+              confirmRow.appendChild(note);
+              var input = document.createElement("input");
+              input.type = "text";
+              input.placeholder = "Type the series name to confirm";
+              confirmRow.appendChild(input);
+              var confirmBtn = document.createElement("button");
+              confirmBtn.setAttribute("is", "emby-button");
+              confirmBtn.className = "raised button-delete";
+              confirmBtn.textContent = "Stop following";
+              confirmBtn.disabled = true;
+              input.oninput = function () {
+                confirmBtn.disabled = input.value.trim() !== series.Title.trim();
+              };
+              confirmBtn.onclick = function () {
+                confirmBtn.disabled = true;
+                fetchJson("stop-following?arrSeriesId=" + series.ArrSeriesId, { type: "POST" }).then(function (outcome) {
+                  if (outcome && outcome.Ok) {
+                    if (outcome.Message) {
+                      Dashboard.alert(series.Title + ": " + outcome.Message);
+                    }
+                    loadFollowedSeries();
+                  } else {
+                    note.textContent = series.Title + ": " + ((outcome && outcome.Message) || "couldn't stop following — see Audit Log");
+                  }
+                  refreshAuditLog();
+                }).catch(function (err) {
+                  note.textContent = series.Title + ": request failed — " + (err.message || "see browser console");
+                  confirmBtn.disabled = false;
+                });
+              };
+              confirmRow.appendChild(confirmBtn);
+              row.appendChild(confirmRow);
+
+              stopBtn.onclick = function () {
+                confirmRow.style.display = confirmRow.style.display === "none" ? "block" : "none";
+              };
+              list.appendChild(row);
+            });
+          }).catch(function (err) {
+            console.error(err); // section just stays hidden
           });
         }
 

@@ -262,6 +262,68 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         return ok;
     }
 
+    // Monitored Sonarr series with no episode files and no Jellyfin entry -- what's left after a
+    // keep-series delete. Empty list on any Sonarr failure.
+    public async Task<IReadOnlyList<FollowedSeries>> GetFollowedEmptySeriesAsync()
+    {
+        var all = await _arrClientFactory.GetClient(true).GetAllSeriesAsync();
+        if (all == null)
+        {
+            return Array.Empty<FollowedSeries>();
+        }
+
+        return all
+            .Where(s => s.Monitored && s.EpisodeFileCount == 0 && !string.IsNullOrEmpty(s.TvdbId) && !_itemAccessor.SeriesExistsWithTvdbId(s.TvdbId!))
+            .OrderBy(s => s.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    // "Stop following" a series from the followed list: remove it from Sonarr and reset its Seerr
+    // entry. Only ever for a series with no files -- re-checked here, server-side, so this can
+    // never be used to delete a series that still has content (that goes through the normal flow).
+    public async Task<StopFollowingOutcome> StopFollowingAsync(int arrSeriesId)
+    {
+        if (_circuitBreaker.IsTripped)
+        {
+            return new StopFollowingOutcome { Ok = false, Message = "Deletes are disabled until the circuit breaker is reset in Settings." };
+        }
+
+        var client = _arrClientFactory.GetClient(true);
+        var series = await client.GetSeriesSummaryAsync(arrSeriesId);
+        if (series == null)
+        {
+            return new StopFollowingOutcome { Ok = false, Message = "Couldn't find this series in Sonarr." };
+        }
+
+        if (series.EpisodeFileCount > 0)
+        {
+            await LogAsync(Guid.Empty, series.Title, DeleteGranularity.Series, "StopFollowing", "Failed", "Series has episode files; use the normal delete", false, null);
+            return new StopFollowingOutcome { Ok = false, Message = "This series has episodes on disk — delete it from the TV list instead." };
+        }
+
+        if (!await client.DeleteAsync(arrSeriesId, isSeries: true))
+        {
+            _circuitBreaker.RecordFailure();
+            await LogAsync(Guid.Empty, series.Title, DeleteGranularity.Series, "StopFollowing", "Failed", "Sonarr rejected the delete", false, null);
+            return new StopFollowingOutcome { Ok = false, Message = "Sonarr rejected the delete — see Audit Log." };
+        }
+
+        _circuitBreaker.RecordSuccess();
+
+        var seerrNote = (string?)null;
+        if (series.TmdbId.HasValue)
+        {
+            var seerr = await _seerrClient.FindByTmdbIdAsync(series.TmdbId.Value, isTv: true);
+            if (seerr.State == ArrTrackingState.Tracked && seerr.MediaId.HasValue && !await _seerrClient.UpdateAvailabilityAsync(seerr.MediaId.Value))
+            {
+                seerrNote = "Removed from Sonarr, but the Seerr reset failed";
+            }
+        }
+
+        await LogAsync(Guid.Empty, series.Title, DeleteGranularity.Series, "StopFollowing", seerrNote == null ? "Success" : "Partial", seerrNote, false, null);
+        return new StopFollowingOutcome { Ok = true, Message = seerrNote };
+    }
+
     public async Task<ResolutionResult> ResolveAsync(Guid jellyfinItemId, DeleteGranularity granularity)
     {
         var item = _itemAccessor.GetItem(jellyfinItemId);
