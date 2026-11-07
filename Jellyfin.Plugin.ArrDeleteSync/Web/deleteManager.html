@@ -492,16 +492,20 @@
             box.style.padding = "0.5em";
             box.style.margin = "0.5em 0";
 
+            // One line that always states what will actually happen, given the tickbox.
+            var name = entry.impact.SeriesName + ": ";
             var msg = document.createElement("div");
-            msg.textContent = entry.impact.SeriesName + ": after this delete, no episodes in this series will be monitored.";
-            box.appendChild(msg);
-
             if (entry.impact.Ended) {
-              var ended = document.createElement("div");
-              ended.style.color = "orange";
-              ended.textContent = "This series has ended — no new episodes or seasons are expected.";
-              box.appendChild(ended);
+              msg.textContent = name + (entry.removeSeries
+                ? "series has ended and will be removed."
+                : "series has ended; stays in Sonarr, but nothing new will air.");
+            } else {
+              msg.textContent = name + (entry.removeSeries
+                ? "series will be removed."
+                : "series stays monitored for new episodes and seasons"
+                  + (entry.impact.FollowsNewSeasons ? "." : " (switching this on in Sonarr)."));
             }
+            box.appendChild(msg);
 
             var label = document.createElement("label");
             var checkbox = document.createElement("input");
@@ -512,22 +516,8 @@
               renderBulkConfirm();
             };
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(" Also remove the whole series (Sonarr, Jellyfin and the Seerr request)"));
+            label.appendChild(document.createTextNode(" Remove whole series instead (Sonarr, Jellyfin, Seerr)"));
             box.appendChild(label);
-
-            var hint = document.createElement("div");
-            hint.style.opacity = "0.7";
-            hint.textContent = entry.removeSeries
-              ? "The selected seasons/episodes are replaced by one whole-series delete below."
-              : "Unticked: the series stays in Sonarr and keeps watching for new episodes and seasons.";
-            box.appendChild(hint);
-
-            if (!entry.removeSeries && !entry.impact.FollowsNewSeasons) {
-              var follow = document.createElement("div");
-              follow.style.color = "orange";
-              follow.textContent = "Sonarr is currently NOT set to download new seasons of this show. When you delete, it will be switched on (series monitored, Monitor New Seasons = All) so new seasons are picked up.";
-              box.appendChild(follow);
-            }
 
             list.appendChild(box);
           });
