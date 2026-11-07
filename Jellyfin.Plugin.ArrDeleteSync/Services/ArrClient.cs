@@ -86,6 +86,10 @@ public class ArrClient : IArrClient
         }
     }
 
+    // Counts how many episodes the file backing this episode covers (1 = normal, >1 = multi-
+    // episode file). Derived from the episode list itself -- every episode backed by the same
+    // file shares its episodeFileId. Sonarr v4's /api/v3/episodefile has no "episodeIds" field
+    // (verified on 4.0.20), so it can't be used for this.
     public async Task<int> GetEpisodeFileCoverageCountAsync(int seriesInternalId, int seasonNumber, int episodeNumber)
     {
         var episodes = await FetchEpisodesAsync(seriesInternalId);
@@ -100,36 +104,7 @@ public class ArrClient : IArrClient
             return -1; // episode not found, or has no file — can't confirm coverage
         }
 
-        try
-        {
-            var episodeFileUrl = $"{_baseUrl}/api/v3/episodefile?seriesId={seriesInternalId}";
-            using var fileRequest = new HttpRequestMessage(HttpMethod.Get, episodeFileUrl);
-            fileRequest.Headers.Add("X-Api-Key", _apiKey);
-            using var fileResponse = await _httpClient.SendAsync(fileRequest);
-
-            if (!fileResponse.IsSuccessStatusCode)
-            {
-                return -1;
-            }
-
-            var fileBody = await fileResponse.Content.ReadAsStringAsync();
-            using var fileDoc = JsonDocument.Parse(fileBody);
-
-            foreach (var file in fileDoc.RootElement.EnumerateArray())
-            {
-                if (file.TryGetProperty("id", out var idProp) && idProp.GetInt32() == match.EpisodeFileId &&
-                    file.TryGetProperty("episodeIds", out var episodeIds))
-                {
-                    return episodeIds.GetArrayLength();
-                }
-            }
-
-            return -1; // matching file not found in the episodefile response
-        }
-        catch (Exception)
-        {
-            return -1;
-        }
+        return episodes.Count(e => e.EpisodeFileId == match.EpisodeFileId);
     }
 
     // Deletes every distinct episode file in the given season, without touching the series or
