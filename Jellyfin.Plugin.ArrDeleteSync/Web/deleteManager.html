@@ -216,6 +216,9 @@
             var displayName = (ancestorNames && ancestorNames.length ? ancestorNames.join(" - ") + " - " : "") + item.Name;
             selectedItems[item.Id] = { id: item.Id, name: displayName, type: item.Type, granularity: granularity, ancestorIds: ancestorIds || [] };
           }
+          // The confirm step describes the selection as it was when opened; any change makes it
+          // stale, so changing the selection cancels it, exactly like pressing Cancel.
+          closeBulkConfirm();
           updateSelectionBar();
           rerenderCurrentTab();
         }
@@ -403,6 +406,16 @@
         }
 
         var confirmedSafeItems = [];
+        // Bumped whenever the confirm step is opened or cancelled, so a slow in-flight resolve /
+        // series-impact lookup from an earlier open can't re-show a confirm step afterwards.
+        var confirmGeneration = 0;
+
+        function closeBulkConfirm() {
+          confirmGeneration++;
+          confirmedSafeItems = [];
+          seriesImpacts = [];
+          document.getElementById("BulkConfirmSection").style.display = "none";
+        }
         // Bulk-confirm state, kept so the remove-series tickboxes can re-render the lists.
         var baseSafeItems = [];
         var baseNeedsConfirmationItems = [];
@@ -415,6 +428,7 @@
             return;
           }
 
+          var generation = ++confirmGeneration;
           var items = Object.keys(selectedItems).map(function (id) { return selectedItems[id]; });
           var resolvedCount = 0;
           var safeItems = [];
@@ -430,7 +444,7 @@
               }
               resolvedCount++;
               if (resolvedCount === items.length) {
-                loadSeriesImpacts(safeItems, needsConfirmationItems);
+                loadSeriesImpacts(safeItems, needsConfirmationItems, generation);
               }
             }).catch(function (err) {
               console.error(err);
@@ -440,7 +454,7 @@
               // resolvedCount so a single failure can't hang the rest of the batch forever.
               resolvedCount++;
               if (resolvedCount === items.length) {
-                loadSeriesImpacts(safeItems, needsConfirmationItems);
+                loadSeriesImpacts(safeItems, needsConfirmationItems, generation);
               }
             });
           });
@@ -449,7 +463,10 @@
         // Asks the server which series this batch of season/episode deletes would leave with no
         // monitored episodes, so the confirm step can offer "also remove the whole series". Any
         // failure here just means no tickbox -- the delete then behaves exactly as before.
-        function loadSeriesImpacts(safeItems, needsConfirmationItems) {
+        function loadSeriesImpacts(safeItems, needsConfirmationItems, generation) {
+          if (generation !== confirmGeneration) {
+            return; // selection changed or cancelled while resolving
+          }
           baseSafeItems = safeItems;
           baseNeedsConfirmationItems = needsConfirmationItems;
           seriesImpacts = [];
@@ -479,7 +496,9 @@
           }).catch(function (err) {
             console.error(err);
           }).then(function () {
-            renderBulkConfirm();
+            if (generation === confirmGeneration) {
+              renderBulkConfirm();
+            }
           });
         }
 
@@ -908,7 +927,7 @@
             runDeleteBatch(confirmedSafeItems);
           }
           if (e.target.id === "CancelBulkButton") {
-            document.getElementById("BulkConfirmSection").style.display = "none";
+            closeBulkConfirm();
           }
         });
       })();
