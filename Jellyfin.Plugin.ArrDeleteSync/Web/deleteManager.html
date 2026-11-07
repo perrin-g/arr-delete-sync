@@ -30,6 +30,8 @@
           </div>
 
           <div id="TvTab" style="display:none">
+           <div style="display:flex; flex-wrap:wrap; gap:1.5em; align-items:flex-start;">
+           <div style="flex:2 1 24em; min-width:0;">
             <input is="emby-input" type="text" id="TvFilter" label="Filter series" />
             <div id="TvList"></div>
             <div style="display:flex; align-items:center; gap:1em; margin-top:0.5em;">
@@ -42,10 +44,12 @@
                 <option value="100">100 per page</option>
               </select>
             </div>
-            <div id="FollowedSection" style="display:none; margin-top:1em;">
-              <h3>Followed — no episodes yet</h3>
+           </div>
+            <div id="FollowedSection" style="display:none; flex:1 1 16em; min-width:0;">
+              <input is="emby-input" type="text" id="FollowedFilter" label="Followed — no episodes yet" />
               <div id="FollowedList"></div>
             </div>
+           </div>
           </div>
         </div>
 
@@ -302,25 +306,46 @@
         }
 
         // Shows Sonarr still follows but which have no files (so no Jellyfin entry, and nothing
-        // in the list above) -- e.g. after a keep-series delete. "Stop following" removes the
+        // in the series list beside it) -- e.g. after a keep-series delete. "Stop following" removes the
         // series from Sonarr and resets its Seerr entry; the server refuses if it has files.
+        var followedSeries = [];
+
         function loadFollowedSeries() {
           fetchJson("followed-series").then(function (followed) {
-            var section = document.getElementById("FollowedSection");
-            var list = document.getElementById("FollowedList");
-            list.innerHTML = "";
-            section.style.display = (followed && followed.length) ? "block" : "none";
-            (followed || []).forEach(function (series) {
+            followedSeries = followed || [];
+            document.getElementById("FollowedSection").style.display = followedSeries.length ? "block" : "none";
+            renderFollowedList(document.getElementById("FollowedFilter").value);
+          }).catch(function (err) {
+            console.error(err); // section just stays hidden
+          });
+        }
+
+        // Compact button: just a little bigger than its text.
+        function makeSlimButton(text, danger) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = text;
+          // Inline styles: Jellyfin only keeps the page div, so a <style> block may not survive.
+          btn.style.cssText = "padding:0.1em 0.45em; margin:0 0.25em; font-size:0.85em; line-height:1.3;" +
+            "border:none; border-radius:3px; cursor:pointer; color:#fff; vertical-align:middle;" +
+            "background:" + (danger ? "#c62828" : "rgba(255,255,255,0.15)") + ";";
+          return btn;
+        }
+
+        function renderFollowedList(filterText) {
+          var list = document.getElementById("FollowedList");
+          list.innerHTML = "";
+          var needle = (filterText || "").trim().toLowerCase();
+          followedSeries.filter(function (series) {
+            return !needle || series.Title.toLowerCase().indexOf(needle) !== -1;
+          }).forEach(function (series) {
               var row = document.createElement("div");
               row.style.margin = "0.25em 0";
               var label = document.createElement("span");
               label.textContent = series.Title + (series.Ended ? " (monitored, ended)" : " (monitored)") + " ";
               row.appendChild(label);
 
-              var stopBtn = document.createElement("button");
-              stopBtn.setAttribute("is", "emby-button");
-              stopBtn.className = "raised";
-              stopBtn.textContent = "Stop following";
+              var stopBtn = makeSlimButton("Stop following");
               row.appendChild(stopBtn);
 
               var confirmRow = document.createElement("div");
@@ -332,13 +357,12 @@
               input.type = "text";
               input.placeholder = "Type the series name to confirm";
               confirmRow.appendChild(input);
-              var confirmBtn = document.createElement("button");
-              confirmBtn.setAttribute("is", "emby-button");
-              confirmBtn.className = "raised button-delete";
-              confirmBtn.textContent = "Stop following";
+              var confirmBtn = makeSlimButton("Stop following", true);
               confirmBtn.disabled = true;
+              confirmBtn.style.opacity = "0.5";
               input.oninput = function () {
                 confirmBtn.disabled = input.value.trim() !== series.Title.trim();
+                confirmBtn.style.opacity = confirmBtn.disabled ? "0.5" : "1";
               };
               confirmBtn.onclick = function () {
                 confirmBtn.disabled = true;
@@ -365,9 +389,6 @@
               };
               list.appendChild(row);
             });
-          }).catch(function (err) {
-            console.error(err); // section just stays hidden
-          });
         }
 
         // Pagination applies to top-level series only — an expanded series' seasons/episodes
@@ -963,6 +984,9 @@
           if (e.target.id === "TvFilter") {
             tvPage = 1;
             renderTvList(e.target.value);
+          }
+          if (e.target.id === "FollowedFilter") {
+            renderFollowedList(e.target.value);
           }
         });
 
