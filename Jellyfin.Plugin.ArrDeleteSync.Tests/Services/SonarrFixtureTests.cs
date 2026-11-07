@@ -25,10 +25,17 @@ public class SonarrFixtureTests
     private sealed class FakeSonarr
     {
         public readonly List<(string Url, string Body)> Puts = new();
+        public readonly List<string> Deletes = new();
 
         public HttpResponseMessage Handle(HttpRequestMessage req)
         {
             var url = req.RequestUri!.PathAndQuery;
+            if (req.Method == HttpMethod.Delete)
+            {
+                Deletes.Add(url);
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
             if (req.Method == HttpMethod.Put)
             {
                 Puts.Add((url, req.Content!.ReadAsStringAsync().Result));
@@ -192,11 +199,100 @@ public class SonarrFixtureTests
     }
 
     [Fact]
-    public async Task Fawlty_DeleteS1Only_NoPrompt()
+    public async Task Fawlty_DeleteS1Only_EndedInfoOnly_NoTickbox()
     {
         var (orchestrator, accessor, _, _) = MakeOrchestrator();
 
-        Assert.Empty(await orchestrator.GetSeriesImpactAsync(new[] { Season(accessor, false, 1) }));
+        var impact = Assert.Single(await orchestrator.GetSeriesImpactAsync(new[] { Season(accessor, false, 1) }));
+
+        Assert.True(impact.Ended);
+        Assert.False(impact.EmptiesSeries);
+        Assert.False(impact.WholeSeries);
+    }
+
+    [Fact]
+    public async Task WholeSeries_Fawlty_EmptiesAndEnded()
+    {
+        var (orchestrator, accessor, _, _) = MakeOrchestrator();
+        accessor.Setup(a => a.GetItem(FawltySeriesItem)).Returns(new JellyfinItemInfo { Id = FawltySeriesItem, Name = "Fawlty Towers", Granularity = DeleteGranularity.Series, TvdbId = "75932" });
+
+        var impact = Assert.Single(await orchestrator.GetSeriesImpactAsync(new[] { new DeleteRequest { JellyfinItemId = FawltySeriesItem, Granularity = DeleteGranularity.Series } }));
+
+        Assert.True(impact.WholeSeries);
+        Assert.True(impact.EmptiesSeries);
+        Assert.True(impact.Ended);
+        Assert.Equal(FawltySeriesItem, impact.SeriesItemId);
+        Assert.Equal("Fawlty Towers", impact.SeriesName);
+        Assert.Equal(new[] { FawltySeriesItem }, impact.ItemIds);
+    }
+
+    [Fact]
+    public async Task WholeSeries_From_EmptiesAndContinuing()
+    {
+        var (orchestrator, _, _, _) = MakeOrchestrator();
+
+        var impact = Assert.Single(await orchestrator.GetSeriesImpactAsync(new[] { new DeleteRequest { JellyfinItemId = FromSeriesItem, Granularity = DeleteGranularity.Series } }));
+
+        Assert.True(impact.WholeSeries);
+        Assert.True(impact.EmptiesSeries);
+        Assert.False(impact.Ended);
+        Assert.True(impact.FollowsNewSeasons);
+    }
+
+    [Fact]
+    public async Task DeleteAllEpisodesKeepSeries_Fawlty_DeletesEveryFile_UnmonitorsAllIncludingSpecials_FollowsNewSeasons()
+    {
+        var (client, sonarr) = MakeClient();
+
+        Assert.True(await client.DeleteAllEpisodeFilesKeepSeriesAsync(8));
+
+        // every real episode file id in the captured episode list, each deleted exactly once
+        var expectedFiles = Enumerable.Range(107, 12).Select(id => $"/api/v3/episodefile/{id}").ToList();
+        Assert.Equal(expectedFiles.OrderBy(x => x), sonarr.Deletes.OrderBy(x => x));
+
+        var monitorPut = Assert.Single(sonarr.Puts, p => p.Url == "/api/v3/episode/monitor");
+        var body = JsonNode.Parse(monitorPut.Body)!;
+        Assert.False(body["monitored"]!.GetValue<bool>());
+        var realEpisodeIds = JsonNode.Parse(Fixture("episodes-fawlty.json"))!.AsArray().Select(e => e!["id"]!.GetValue<int>()).OrderBy(x => x);
+        Assert.Equal(realEpisodeIds, body["episodeIds"]!.AsArray().Select(x => x!.GetValue<int>()).OrderBy(x => x)); // all 42, specials included
+
+        var seriesPut = JsonNode.Parse(Assert.Single(sonarr.Puts, p => p.Url == "/api/v3/series/8").Body)!;
+        Assert.True(seriesPut["monitored"]!.GetValue<bool>());
+        Assert.Equal("all", seriesPut["monitorNewItems"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task DeleteAllEpisodesKeepSeries_NeverDeletesTheSeries()
+    {
+        var (client, sonarr) = MakeClient();
+
+        await client.DeleteAllEpisodeFilesKeepSeriesAsync(8);
+
+        Assert.DoesNotContain(sonarr.Deletes, d => d.StartsWith("/api/v3/series", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Execute_AllEpisodesKeepSeries_From_RealClient_SkipsSeerr_RemovesJellyfinCatalogEntry()
+    {
+        var (client, sonarr) = MakeClient();
+        var factory = new Mock<IArrClientFactory>();
+        factory.Setup(f => f.GetClient(It.IsAny<bool>())).Returns(client);
+        var accessor = new Mock<IJellyfinItemAccessor>();
+        accessor.Setup(a => a.GetItem(FromSeriesItem)).Returns(new JellyfinItemInfo { Id = FromSeriesItem, Name = "FROM", Granularity = DeleteGranularity.Series, TvdbId = "401003", TmdbId = "124364", HasPhysicalPath = true });
+        accessor.Setup(a => a.DeleteItem(FromSeriesItem, out It.Ref<bool>.IsAny, out It.Ref<string?>.IsAny)).Returns(true);
+        var seerr = new Mock<ISeerrClient>();
+        seerr.Setup(s => s.FindByTmdbIdAsync(124364, true)).ReturnsAsync(new SeerrLookupResult { State = ArrTrackingState.Tracked, MediaId = 9 });
+        var orchestrator = new DeleteOrchestrator(accessor.Object, factory.Object, seerr.Object,
+            new Mock<IRetryQueueStore>().Object, new Mock<IAuditLogStore>().Object, new Mock<ICircuitBreaker>().Object);
+
+        var outcome = await orchestrator.ExecuteDeleteAsync(new DeleteRequest { JellyfinItemId = FromSeriesItem, Granularity = DeleteGranularity.AllEpisodesKeepSeries });
+
+        Assert.Null(outcome.BlockedReason);
+        Assert.True(outcome.ArrDeleted);
+        Assert.True(outcome.JellyfinCleanedUp);
+        seerr.Verify(s => s.UpdateAvailabilityAsync(It.IsAny<int>()), Times.Never);
+        Assert.DoesNotContain(sonarr.Deletes, d => d.StartsWith("/api/v3/series", StringComparison.Ordinal));
+        Assert.Contains(sonarr.Puts, p => p.Url == "/api/v3/series/20");
     }
 
     [Fact]
@@ -216,8 +312,11 @@ public class SonarrFixtureTests
         var (orchestrator, accessor, _, _) = MakeOrchestrator();
         var all = Enumerable.Range(1, 6).SelectMany(e => new[] { Episode(accessor, 1, e), Episode(accessor, 2, e) }).ToList();
 
-        Assert.Empty(await orchestrator.GetSeriesImpactAsync(all.Take(11).ToList()));
-        Assert.True(Assert.Single(await orchestrator.GetSeriesImpactAsync(all)).Ended);
+        // Ended series: 11 of 12 is info only (no tickbox); all 12 empties it (tickbox).
+        Assert.False(Assert.Single(await orchestrator.GetSeriesImpactAsync(all.Take(11).ToList())).EmptiesSeries);
+        var emptied = Assert.Single(await orchestrator.GetSeriesImpactAsync(all));
+        Assert.True(emptied.EmptiesSeries);
+        Assert.True(emptied.Ended);
     }
 
     [Fact]

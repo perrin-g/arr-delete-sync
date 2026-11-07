@@ -12,7 +12,11 @@ public enum DeleteGranularity
     Movie,
     Series,
     Season,
-    Episode
+    Episode,
+    // Whole series selected but "remove whole series" left unticked: delete every episode file
+    // (specials included) and unmonitor them all, keep the series monitored for new seasons,
+    // never touch Seerr. Appended last so stored numeric values of the others don't shift.
+    AllEpisodesKeepSeries
 }
 
 public enum DeleteStepStatus

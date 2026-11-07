@@ -80,6 +80,8 @@ public class SeriesImpactTests
         var impact = await orchestrator.GetSeriesImpactAsync(new[] { Req(s3, DeleteGranularity.Season), Req(s4, DeleteGranularity.Season) });
 
         var only = Assert.Single(impact);
+        Assert.True(only.EmptiesSeries);
+        Assert.False(only.WholeSeries);
         Assert.Equal(SeriesId, only.SeriesItemId);
         Assert.Equal("FROM", only.SeriesName);
         Assert.False(only.Ended);
@@ -156,14 +158,27 @@ public class SeriesImpactTests
     }
 
     [Fact]
-    public async Task Impact_IgnoresMovieAndSeriesRequests()
+    public async Task Impact_IgnoresMovieRequests()
     {
         var (orchestrator, _, arr) = Make();
 
-        var impact = await orchestrator.GetSeriesImpactAsync(new[] { Req(Guid.NewGuid(), DeleteGranularity.Movie), Req(Guid.NewGuid(), DeleteGranularity.Series) });
-
-        Assert.Empty(impact);
+        Assert.Empty(await orchestrator.GetSeriesImpactAsync(new[] { Req(Guid.NewGuid(), DeleteGranularity.Movie) }));
         arr.Verify(a => a.GetSeriesMonitorStateAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Impact_Continuing_NotEmptied_IsLeftOut_ButEnded_NotEmptied_IsInfoOnly()
+    {
+        var (orchestrator, accessor, arr) = Make();
+        var s4 = Guid.NewGuid();
+        accessor.Setup(a => a.GetItem(s4)).Returns(Season(s4, 4));
+        arr.Setup(a => a.GetSeriesMonitorStateAsync(20)).ReturnsAsync(State(false, true, new MonitoredEpisode(4, 1, true), new MonitoredEpisode(5, 1, true)));
+        Assert.Empty(await orchestrator.GetSeriesImpactAsync(new[] { Req(s4, DeleteGranularity.Season) }));
+
+        arr.Setup(a => a.GetSeriesMonitorStateAsync(20)).ReturnsAsync(State(true, true, new MonitoredEpisode(4, 1, true), new MonitoredEpisode(5, 1, true)));
+        var info = Assert.Single(await orchestrator.GetSeriesImpactAsync(new[] { Req(s4, DeleteGranularity.Season) }));
+        Assert.True(info.Ended);
+        Assert.False(info.EmptiesSeries);
     }
 
     [Fact]

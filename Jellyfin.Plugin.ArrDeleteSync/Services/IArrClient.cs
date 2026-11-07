@@ -12,4 +12,5 @@ public interface IArrClient
     Task<bool> DeleteEpisodeFilesAsync(int seriesInternalId, int seasonNumber, int episodeNumber);
     Task<SeriesMonitorState?> GetSeriesMonitorStateAsync(int seriesInternalId);
     Task<bool> SetFollowNewSeasonsAsync(int seriesInternalId);
+    Task<bool> DeleteAllEpisodeFilesKeepSeriesAsync(int seriesInternalId);
 }

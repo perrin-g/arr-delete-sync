@@ -110,6 +110,9 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
     // Season/Episode granularity are expected to have already blocked that case earlier when the
     // number is knowable up front (see ExecuteDeleteAsync's guard), so reaching the closed-fail
     // branch here should only happen for stale retry-queue entries from before this fix shipped.
+    private static bool IsTv(DeleteGranularity granularity) =>
+        granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode or DeleteGranularity.AllEpisodesKeepSeries;
+
     private static async Task<bool> DeleteArrContentAsync(
         IArrClient client,
         bool isSeries,
@@ -125,6 +128,8 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             DeleteGranularity.Episode when seasonNumber.HasValue && episodeNumber.HasValue =>
                 await client.DeleteEpisodeFilesAsync(arrInternalId, seasonNumber.Value, episodeNumber.Value),
             DeleteGranularity.Season or DeleteGranularity.Episode => false,
+            DeleteGranularity.AllEpisodesKeepSeries =>
+                await client.DeleteAllEpisodeFilesKeepSeriesAsync(arrInternalId),
             _ => await client.DeleteAsync(arrInternalId, isSeries)
         };
     }
@@ -138,19 +143,26 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         var bySeries = new Dictionary<string, List<(JellyfinItemInfo Item, DeleteGranularity Granularity)>>(StringComparer.Ordinal);
         foreach (var request in requests)
         {
-            if (request.Granularity is not (DeleteGranularity.Season or DeleteGranularity.Episode))
+            if (request.Granularity is not (DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode))
             {
                 continue;
             }
 
             var item = _itemAccessor.GetItem(request.JellyfinItemId);
-            var tvdbId = item?.SeriesTvdbId ?? item?.TvdbId;
-            if (item?.SeriesItemId == null || item.SeasonNumber == null || string.IsNullOrEmpty(tvdbId))
+            if (item == null)
             {
                 continue;
             }
 
-            if (request.Granularity == DeleteGranularity.Episode && item.EpisodeNumber == null)
+            var isSeriesItem = request.Granularity == DeleteGranularity.Series;
+            var tvdbId = isSeriesItem ? (item.TvdbId ?? item.SeriesTvdbId) : (item.SeriesTvdbId ?? item.TvdbId);
+            if (string.IsNullOrEmpty(tvdbId))
+            {
+                continue;
+            }
+
+            if (!isSeriesItem && (item.SeriesItemId == null || item.SeasonNumber == null
+                || (request.Granularity == DeleteGranularity.Episode && item.EpisodeNumber == null)))
             {
                 continue;
             }
@@ -179,6 +191,23 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 continue;
             }
 
+            var follows = state.SeriesMonitored && state.MonitorsNewSeasons;
+            var whole = items.FirstOrDefault(i => i.Granularity == DeleteGranularity.Series);
+            if (whole.Item != null)
+            {
+                impacts.Add(new SeriesImpact
+                {
+                    SeriesItemId = whole.Item.Id,
+                    SeriesName = whole.Item.Name,
+                    Ended = state.Ended,
+                    FollowsNewSeasons = follows,
+                    WholeSeries = true,
+                    EmptiesSeries = true,
+                    ItemIds = new List<Guid> { whole.Item.Id }
+                });
+                continue;
+            }
+
             var selectedSeasons = items.Where(i => i.Granularity == DeleteGranularity.Season).Select(i => i.Item.SeasonNumber!.Value).ToHashSet();
             var selectedEpisodes = items.Where(i => i.Granularity == DeleteGranularity.Episode).Select(i => (i.Item.SeasonNumber!.Value, i.Item.EpisodeNumber!.Value)).ToHashSet();
 
@@ -187,7 +216,8 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 && !selectedSeasons.Contains(e.SeasonNumber)
                 && !selectedEpisodes.Contains((e.SeasonNumber, e.EpisodeNumber)));
 
-            if (remainingMonitored)
+            // Not emptied: only worth showing (as info, no tickbox) when the series has ended.
+            if (remainingMonitored && !state.Ended)
             {
                 continue;
             }
@@ -197,7 +227,9 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
                 SeriesItemId = items[0].Item.SeriesItemId!.Value,
                 SeriesName = items[0].Item.SeriesName ?? state.Title,
                 Ended = state.Ended,
-                FollowsNewSeasons = state.SeriesMonitored && state.MonitorsNewSeasons,
+                FollowsNewSeasons = follows,
+                WholeSeries = false,
+                EmptiesSeries = !remainingMonitored,
                 ItemIds = items.Select(i => i.Item.Id).ToList()
             });
         }
@@ -238,7 +270,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             return new ResolutionResult { State = ArrTrackingState.ConfirmedNotTracked, HasUsableProviderId = false };
         }
 
-        var isSeries = granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
+        var isSeries = IsTv(granularity);
         var tvdbId = granularity == DeleteGranularity.Movie ? null : (item.SeriesTvdbId ?? item.TvdbId);
         var tmdbId = isSeries ? (item.SeriesTmdbId ?? item.TmdbId) : item.TmdbId;
 
@@ -419,7 +451,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         bool arrDeleted = false; // untracked content: nothing to delete via arr, so vacuously not "deleted by arr"
         if (!isUntracked && resolution.State == ArrTrackingState.Tracked && resolution.ArrInternalId.HasValue)
         {
-            var isSeries = request.Granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
+            var isSeries = IsTv(request.Granularity);
             var client = _arrClientFactory.GetClient(isSeries);
             arrDeleted = await DeleteArrContentAsync(client, isSeries, resolution.ArrInternalId.Value, request.Granularity, itemInfo?.SeasonNumber, itemInfo?.EpisodeNumber);
 
@@ -471,7 +503,8 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         }
 
         bool seerrUpdated = true;
-        if (resolution.SeerrMediaId.HasValue)
+        // Keeping the series means its Seerr request stays as it is (new seasons still belong to it).
+        if (resolution.SeerrMediaId.HasValue && request.Granularity != DeleteGranularity.AllEpisodesKeepSeries)
         {
             seerrUpdated = await _seerrClient.UpdateAvailabilityAsync(resolution.SeerrMediaId.Value);
         }
@@ -548,7 +581,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             return resolved;
         }
 
-        var isSeries = entry.Granularity is DeleteGranularity.Series or DeleteGranularity.Season or DeleteGranularity.Episode;
+        var isSeries = IsTv(entry.Granularity);
 
         var arrOk = entry.ArrDeleteStatus == DeleteStepStatus.Succeeded;
         if (!arrOk)
@@ -582,6 +615,11 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         }
 
         var seerrOk = entry.SeerrUpdateStatus == DeleteStepStatus.Succeeded;
+        if (entry.Granularity == DeleteGranularity.AllEpisodesKeepSeries)
+        {
+            seerrOk = true; // Seerr is never touched when the series is kept
+        }
+
         if (arrOk && jellyfinOk && !seerrOk)
         {
             if (entry.ProviderIdType == "tmdbId" && int.TryParse(entry.ProviderIdValue, out var tmdbInt))

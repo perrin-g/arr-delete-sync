@@ -402,7 +402,7 @@
         }
 
         function needsTypedConfirmation(granularity, resolution) {
-          return !resolution.HasUsableProviderId || granularity === "Series" || granularity === "Season";
+          return !resolution.HasUsableProviderId || granularity === "Series" || granularity === "Season" || granularity === "AllEpisodesKeepSeries";
         }
 
         var confirmedSafeItems = [];
@@ -472,7 +472,7 @@
           seriesImpacts = [];
 
           var tvRequests = safeItems.concat(needsConfirmationItems)
-            .filter(function (item) { return item.granularity === "Season" || item.granularity === "Episode"; })
+            .filter(function (item) { return item.granularity === "Series" || item.granularity === "Season" || item.granularity === "Episode"; })
             .map(function (item) { return { jellyfinItemId: item.id, granularity: item.granularity }; });
 
           if (tvRequests.length === 0) {
@@ -488,7 +488,8 @@
             return Promise.all((impacts || []).map(function (impact) {
               return fetchJson("resolve?itemId=" + impact.SeriesItemId + "&granularity=Series").then(function (resolution) {
                 // Ended series default to removal; continuing ones default to keep following.
-                seriesImpacts.push({ impact: impact, resolution: resolution, removeSeries: !!impact.Ended });
+                // Info-only entries (ended, not emptied) have no tickbox, so never remove.
+                seriesImpacts.push({ impact: impact, resolution: resolution, removeSeries: !!(impact.EmptiesSeries && impact.Ended) });
               }).catch(function (err) {
                 console.error(err); // no tickbox for this series
               });
@@ -512,31 +513,38 @@
             box.style.margin = "0.5em 0";
 
             // One line that always states what will actually happen, given the tickbox.
-            var name = entry.impact.SeriesName + ": ";
+            var impact = entry.impact;
+            var name = impact.SeriesName + (impact.Ended ? " (ended): " : ": ");
+            var deleted = impact.WholeSeries ? "all episodes deleted" : "selected seasons/episodes deleted";
             var msg = document.createElement("div");
-            if (entry.impact.Ended) {
-              msg.textContent = name + (entry.removeSeries
-                ? "series has ended and will be removed."
-                : "series has ended; stays in Sonarr, but nothing new will air.");
+            if (!impact.EmptiesSeries) {
+              msg.textContent = name + "nothing new will air.";
+            } else if (entry.removeSeries) {
+              msg.textContent = name + "all episodes and the series will be removed.";
+            } else if (impact.Ended) {
+              msg.style.color = "orange";
+              msg.textContent = "\u26A0 " + name + deleted + (impact.WholeSeries
+                ? ", leaving an empty series in Sonarr that won't appear in Jellyfin. Tick to remove it."
+                : ", leaving a series in Sonarr with nothing monitored. Tick to remove it.");
             } else {
-              msg.textContent = name + (entry.removeSeries
-                ? "series will be removed."
-                : "series stays monitored for new episodes and seasons"
-                  + (entry.impact.FollowsNewSeasons ? "." : " (switching this on in Sonarr)."));
+              msg.textContent = name + deleted + "; series stays monitored for new episodes and seasons"
+                + (impact.FollowsNewSeasons ? "." : " (switching this on in Sonarr).");
             }
             box.appendChild(msg);
 
-            var label = document.createElement("label");
-            var checkbox = document.createElement("input");
-            checkbox.type = "checkbox";
-            checkbox.checked = entry.removeSeries;
-            checkbox.onchange = function () {
-              entry.removeSeries = checkbox.checked;
-              renderBulkConfirm();
-            };
-            label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(" Remove whole series instead (Sonarr, Jellyfin, Seerr)"));
-            box.appendChild(label);
+            if (impact.EmptiesSeries) {
+              var label = document.createElement("label");
+              var checkbox = document.createElement("input");
+              checkbox.type = "checkbox";
+              checkbox.checked = entry.removeSeries;
+              checkbox.onchange = function () {
+                entry.removeSeries = checkbox.checked;
+                renderBulkConfirm();
+              };
+              label.appendChild(checkbox);
+              label.appendChild(document.createTextNode(" Remove whole series instead (Sonarr, Jellyfin, Seerr)"));
+              box.appendChild(label);
+            }
 
             list.appendChild(box);
           });
@@ -548,6 +556,20 @@
           var replacedIds = {};
           var seriesItems = [];
           seriesImpacts.forEach(function (entry) {
+            if (!entry.impact.EmptiesSeries) {
+              return; // info only
+            }
+            if (entry.impact.WholeSeries) {
+              // The series itself was selected: ticked = full Series delete, unticked = delete all
+              // episodes but keep the series (and its Seerr request).
+              var original = baseSafeItems.concat(baseNeedsConfirmationItems).filter(function (item) { return item.id === entry.impact.SeriesItemId; })[0];
+              if (!original) {
+                return;
+              }
+              replacedIds[original.id] = true;
+              seriesItems.push(Object.assign({}, original, { granularity: entry.removeSeries ? "Series" : "AllEpisodesKeepSeries" }));
+              return;
+            }
             if (!entry.removeSeries) {
               return;
             }
@@ -591,9 +613,10 @@
             // all -- Sonarr/Radarr keep monitoring and tracking the item exactly as before.
             // Reproduced live: the old wording implied the file would be gone, contradicting the
             // Results line's own "(file NOT deleted...)" text right after.
+            var levelText = item.granularity === "AllEpisodesKeepSeries" ? "every episode of this series" : item.granularity + "-level items";
             var reasonText = !item.resolution.HasUsableProviderId
               ? "Not identified in Jellyfin (no usable provider ID). Force-deleting only removes it from Jellyfin's library — the file stays on disk (you'll need to delete it yourself) and arr/Seerr are never contacted, so Sonarr/Radarr keep tracking and monitoring it exactly as before."
-              : "Deleting " + item.granularity + "-level items is irreversible — recovery requires re-requesting through Seerr.";
+              : "Deleting " + levelText + " is irreversible — recovery requires re-requesting through Seerr.";
             var reasonEl = document.createElement("div");
             reasonEl.textContent = item.name + ": " + reasonText;
             row.appendChild(reasonEl);
@@ -641,7 +664,8 @@
           // Keep-following series touched by this batch whose Sonarr settings need switching on
           // so new seasons download (told to the admin in the confirm step). Done once per series.
           seriesImpacts.forEach(function (entry) {
-            if (entry.removeSeries || entry.impact.FollowsNewSeasons || entry.followApplied) {
+            // Whole-series keep deletes switch this on server-side as part of the delete itself.
+            if (!entry.impact.EmptiesSeries || entry.impact.WholeSeries || entry.removeSeries || entry.impact.FollowsNewSeasons || entry.followApplied) {
               return;
             }
             var touched = items.some(function (item) { return entry.impact.ItemIds.indexOf(item.id) !== -1; });

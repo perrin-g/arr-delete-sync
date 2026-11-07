@@ -27,5 +27,11 @@ public class SeriesImpact
     // False when Sonarr wouldn't download new seasons as things stand (series unmonitored, or its
     // "Monitor New Seasons" is off). Keeping the series then switches both on.
     public bool FollowsNewSeasons { get; set; }
+    // The admin selected the series itself (not seasons/episodes of it).
+    public bool WholeSeries { get; set; }
+    // True when the delete leaves nothing monitored (always for WholeSeries) -- the Delete
+    // Manager offers the remove-series tickbox. False = info only (an ended series whose other
+    // seasons remain), no tickbox.
+    public bool EmptiesSeries { get; set; }
     public required List<Guid> ItemIds { get; set; }
 }

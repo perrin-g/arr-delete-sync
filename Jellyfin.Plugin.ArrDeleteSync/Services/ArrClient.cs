@@ -188,6 +188,36 @@ public class ArrClient : IArrClient
         }
     }
 
+    // Whole-series delete with the series kept: every episode file goes (specials included), every
+    // episode is unmonitored so nothing re-downloads, and the series stays monitored for new
+    // seasons. The series record itself is never deleted.
+    public async Task<bool> DeleteAllEpisodeFilesKeepSeriesAsync(int seriesInternalId)
+    {
+        var episodes = await FetchEpisodesAsync(seriesInternalId);
+        if (episodes == null)
+        {
+            return false;
+        }
+
+        var allSucceeded = true;
+        foreach (var fileId in episodes.Where(e => e.EpisodeFileId != 0).Select(e => e.EpisodeFileId).Distinct())
+        {
+            if (!await DeleteEpisodeFileByIdAsync(fileId))
+            {
+                allSucceeded = false;
+            }
+        }
+
+        if (!allSucceeded)
+        {
+            return false;
+        }
+
+        var episodeIds = episodes.Select(e => e.Id).Where(id => id != 0).ToList();
+        return await SetEpisodesMonitoredAsync(episodeIds, monitored: false)
+            && await SetFollowNewSeasonsAsync(seriesInternalId);
+    }
+
     // Deletes every distinct episode file in the given season, without touching the series or
     // any other season -- unlike DeleteAsync (whole series/movie), used only for Movie/Series
     // granularity. Attempts every file even if one delete fails, rather than stopping at the
