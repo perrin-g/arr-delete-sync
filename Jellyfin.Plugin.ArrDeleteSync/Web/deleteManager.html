@@ -30,22 +30,25 @@
           </div>
 
           <div id="TvTab" style="display:none">
-           <div style="display:flex; flex-wrap:wrap; gap:1.5em; align-items:flex-start;">
-           <div style="flex:2 1 24em; min-width:0;">
+           <!-- Two equal columns split at the same point (and gap) as the Movies/TV buttons above. -->
+           <div style="display:flex; flex-wrap:wrap; gap:0.5em; align-items:flex-start;">
+           <div style="flex:1 1 20em; min-width:0;">
             <input is="emby-input" type="text" id="TvFilter" label="Filter series" />
             <div id="TvList"></div>
             <div style="display:flex; align-items:center; gap:1em; margin-top:0.5em;">
               <button is="emby-button" type="button" class="raised" id="TvPrevPage">Prev</button>
               <span id="TvPageLabel"></span>
               <button is="emby-button" type="button" class="raised" id="TvNextPage">Next</button>
-              <select is="emby-select" id="TvPageSize" label="Per page">
-                <option value="25">25 per page</option>
-                <option value="50">50 per page</option>
-                <option value="100">100 per page</option>
-              </select>
+              <div style="width:9em; margin-left:auto;">
+                <select is="emby-select" id="TvPageSize">
+                  <option value="25">25 per page</option>
+                  <option value="50">50 per page</option>
+                  <option value="100">100 per page</option>
+                </select>
+              </div>
             </div>
            </div>
-            <div id="FollowedSection" style="display:none; flex:1 1 16em; min-width:0;">
+            <div id="FollowedSection" style="display:none; flex:1 1 20em; min-width:0;">
               <input is="emby-input" type="text" id="FollowedFilter" label="Followed — no episodes yet" />
               <div id="FollowedList"></div>
             </div>
