@@ -51,6 +51,23 @@ public class ArrDeleteSyncController : ControllerBase
         return Ok(outcome);
     }
 
+    // Read-only pre-delete check: which series would be left with no monitored episodes by this
+    // batch of season/episode deletes. The Delete Manager uses it to offer a remove-series tickbox.
+    [HttpPost("series-impact")]
+    public async Task<ActionResult> SeriesImpact([FromBody] DeleteRequest[] requests)
+    {
+        var impacts = await _orchestrator.GetSeriesImpactAsync(requests ?? Array.Empty<DeleteRequest>());
+        return Ok(impacts);
+    }
+
+    // Used when the admin keeps following a series a delete leaves with nothing monitored.
+    [HttpPost("keep-following")]
+    public async Task<ActionResult> KeepFollowing([FromQuery] Guid seriesItemId)
+    {
+        var ok = await _orchestrator.KeepFollowingAsync(seriesItemId);
+        return Ok(new { ok });
+    }
+
     [HttpGet("retry-queue")]
     public async Task<ActionResult> GetRetryQueue()
     {

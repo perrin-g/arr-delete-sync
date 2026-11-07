@@ -1,0 +1,117 @@
+{
+  "title": "Fawlty Towers",
+  "alternateTitles": [],
+  "sortTitle": "fawlty towers",
+  "status": "ended",
+  "ended": true,
+  "overview": "Hotel owner Basil Fawlty's incompetence, short fuse, and arrogance form a combination that ensures accidents and trouble are never far away.",
+  "previousAiring": "1979-10-25T19:00:00Z",
+  "network": "BBC Two",
+  "airTime": "20:00",
+  "images": [
+    {
+      "coverType": "banner",
+      "url": "/MediaCover/8/banner.jpg?lastWrite=639183866282470579",
+      "remoteUrl": "https://artworks.thetvdb.com/banners/graphical/75932-g2.jpg"
+    },
+    {
+      "coverType": "poster",
+      "url": "/MediaCover/8/poster.jpg?lastWrite=639183866282630579",
+      "remoteUrl": "https://artworks.thetvdb.com/banners/posters/75932-6.jpg"
+    },
+    {
+      "coverType": "fanart",
+      "url": "/MediaCover/8/fanart.jpg?lastWrite=639183866283030578",
+      "remoteUrl": "https://artworks.thetvdb.com/banners/fanart/original/75932-3.jpg"
+    },
+    {
+      "coverType": "clearlogo",
+      "url": "/MediaCover/8/clearlogo.png?lastWrite=639183866283190577",
+      "remoteUrl": "https://artworks.thetvdb.com/banners/v4/series/75932/clearlogo/611b957ccada0.png"
+    }
+  ],
+  "originalLanguage": {
+    "id": 1,
+    "name": "English"
+  },
+  "seasons": [
+    {
+      "seasonNumber": 0,
+      "monitored": false,
+      "statistics": {
+        "episodeFileCount": 0,
+        "episodeCount": 0,
+        "totalEpisodeCount": 30,
+        "sizeOnDisk": 0,
+        "releaseGroups": [],
+        "percentOfEpisodes": 0
+      }
+    },
+    {
+      "seasonNumber": 1,
+      "monitored": true,
+      "statistics": {
+        "previousAiring": "1975-10-24T19:00:00Z",
+        "episodeFileCount": 6,
+        "episodeCount": 6,
+        "totalEpisodeCount": 6,
+        "sizeOnDisk": 1514181951,
+        "releaseGroups": [],
+        "percentOfEpisodes": 100
+      }
+    },
+    {
+      "seasonNumber": 2,
+      "monitored": true,
+      "statistics": {
+        "previousAiring": "1979-10-25T19:00:00Z",
+        "episodeFileCount": 6,
+        "episodeCount": 6,
+        "totalEpisodeCount": 6,
+        "sizeOnDisk": 1620388765,
+        "releaseGroups": [],
+        "percentOfEpisodes": 100
+      }
+    }
+  ],
+  "year": 1975,
+  "path": "/data/videos/TV/Fawlty Towers S01-S02",
+  "qualityProfileId": 8,
+  "seasonFolder": true,
+  "monitored": true,
+  "monitorNewItems": "all",
+  "useSceneNumbering": false,
+  "runtime": 30,
+  "tvdbId": 75932,
+  "tvRageId": 3532,
+  "tvMazeId": 577,
+  "tmdbId": 2207,
+  "firstAired": "1975-09-19T00:00:00Z",
+  "lastAired": "1979-10-25T00:00:00Z",
+  "seriesType": "standard",
+  "cleanTitle": "fawltytowers",
+  "imdbId": "tt0072500",
+  "titleSlug": "fawlty-towers",
+  "rootFolderPath": "/data/videos/TV",
+  "certification": "TV-PG",
+  "genres": [
+    "Comedy"
+  ],
+  "tags": [],
+  "added": "2026-06-30T03:23:43Z",
+  "ratings": {
+    "votes": 112714,
+    "value": 8.8
+  },
+  "statistics": {
+    "seasonCount": 2,
+    "episodeFileCount": 12,
+    "episodeCount": 12,
+    "totalEpisodeCount": 42,
+    "sizeOnDisk": 3134570716,
+    "releaseGroups": [],
+    "percentOfEpisodes": 100
+  },
+  "languageProfileId": 1,
+  "id": 8
+}

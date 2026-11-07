@@ -39,6 +39,8 @@ public class ArrDeleteSyncControllerTests
     [InlineData(nameof(ArrDeleteSyncController.ResetCircuitBreaker))]
     [InlineData(nameof(ArrDeleteSyncController.GetCircuitBreakerStatus))]
     [InlineData(nameof(ArrDeleteSyncController.TestConnection))]
+    [InlineData(nameof(ArrDeleteSyncController.SeriesImpact))]
+    [InlineData(nameof(ArrDeleteSyncController.KeepFollowing))]
     public void EveryAction_RequiresAdminAuthorization(string methodName)
     {
         var method = typeof(ArrDeleteSyncController).GetMethod(methodName);
@@ -54,6 +56,20 @@ public class ArrDeleteSyncControllerTests
             .Any(a => a.Policy == "RequiresElevation");
 
         Assert.True(hasClassLevelAuth || hasMethodLevelAuth, $"{methodName} is not admin-gated");
+    }
+
+    [Fact]
+    public async Task SeriesImpact_ReturnsOrchestratorResult()
+    {
+        var controller = MakeController(out var orchestrator, out _, out _, out _);
+        var seriesId = Guid.NewGuid();
+        var impacts = new[] { new SeriesImpact { SeriesItemId = seriesId, SeriesName = "FROM", Ended = true, ItemIds = new() { Guid.NewGuid() } } };
+        orchestrator.Setup(o => o.GetSeriesImpactAsync(It.IsAny<System.Collections.Generic.IReadOnlyList<DeleteRequest>>())).ReturnsAsync(impacts);
+
+        var result = await controller.SeriesImpact(new[] { new DeleteRequest { JellyfinItemId = Guid.NewGuid(), Granularity = DeleteGranularity.Season } });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Same(impacts, ok.Value);
     }
 
     [Fact]

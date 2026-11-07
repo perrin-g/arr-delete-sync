@@ -9,6 +9,7 @@ When you delete a movie or TV show from Jellyfin, **ArrDeleteSync** coordinates 
 - **Multi-level granularity** — Delete individual episodes, entire seasons, whole series, or movies
 - **Arr integration** — Confirms tracking in Radarr/Sonarr before deletion and coordinates file removal
 - **Stays deleted** — Season/episode deletes also unmonitor the affected episodes in Sonarr, so its own automatic search/RSS sync doesn't silently re-download what you just deleted
+- **Empty-series prompt** — If a season/episode delete would leave a series with no monitored episodes, the confirm step offers an **"Also remove the whole series"** tickbox (unticked by default; pre-ticked and flagged as ended when Sonarr marks the series ended). Left unticked, the series keeps being followed: if Sonarr isn't set to download new seasons of it, the dialog says so and the plugin switches it on (series monitored, Monitor New Seasons = All)
 - **Seerr sync** — Updates media availability in Seerr when requests are completed
 - **Retry queue** — Failed deletions are automatically retried with exponential backoff; view and manage retries via the UI
 - **Circuit breaker** — Stops making API calls if repeated failures are detected, preventing cascading issues
@@ -132,6 +133,7 @@ Navigate to **Dashboard → ArrDeleteSync Settings**:
 Navigate to **Dashboard → Delete Manager**:
 
 - Movies/TV lists automatically exclude any library named in **Excluded Libraries** (see Configuration)
+- When deleting seasons/episodes empties a series of monitored episodes, choose per series whether to remove the whole series or keep following it for new seasons
 - Manually retry failed deletions
 - Dismiss items from the retry queue (marks as abandoned, logs the action)
 - View detailed status of each retry entry:

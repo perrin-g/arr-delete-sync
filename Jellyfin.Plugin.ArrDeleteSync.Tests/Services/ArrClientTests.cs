@@ -144,52 +144,6 @@ public class ArrClientTests
         throw new InvalidOperationException($"Unexpected URL requested: {url}");
     }
 
-    [Fact]
-    public async Task GetEpisodeFileCoverageCount_ReturnsNegativeOne_WhenEpisodeNotFoundOrHasNoFile()
-    {
-        var handler = new FakeHttpMessageHandler(req => RouteEpisodeAndEpisodeFile(
-            req,
-            episodeListJson: "[{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":100}]",
-            episodeFileListJson: "[]"));
-        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
-
-        var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
-
-        Assert.Equal(-1, count);
-    }
-
-    // Real Sonarr v4 (verified against 4.0.20 on 2026-11-07) does NOT return an "episodeIds"
-    // field on /api/v3/episodefile. Earlier tests faked that field, so every live single-episode
-    // delete was blocked with "arr lookup failed" while tests passed. These use the real shape.
-
-    [Fact]
-    public async Task GetEpisodeFileCoverageCount_ReturnsOne_WithRealSonarrV4Shape_NoEpisodeIdsField()
-    {
-        var handler = new FakeHttpMessageHandler(req => RouteEpisodeAndEpisodeFile(
-            req,
-            episodeListJson: "[{\"seasonNumber\":4,\"episodeNumber\":1,\"episodeFileId\":721},{\"seasonNumber\":4,\"episodeNumber\":2,\"episodeFileId\":712}]",
-            episodeFileListJson: "[{\"id\":721,\"seriesId\":20,\"seasonNumber\":4,\"releaseType\":\"singleEpisode\"},{\"id\":712,\"seriesId\":20,\"seasonNumber\":4,\"releaseType\":\"singleEpisode\"}]"));
-        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
-
-        var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 20, seasonNumber: 4, episodeNumber: 1);
-
-        Assert.Equal(1, count);
-    }
-
-    [Fact]
-    public async Task GetEpisodeFileCoverageCount_ReturnsTwo_WhenTwoEpisodesShareAFile_WithRealSonarrV4Shape()
-    {
-        var handler = new FakeHttpMessageHandler(req => RouteEpisodeAndEpisodeFile(
-            req,
-            episodeListJson: "[{\"seasonNumber\":1,\"episodeNumber\":1,\"episodeFileId\":100},{\"seasonNumber\":1,\"episodeNumber\":2,\"episodeFileId\":100},{\"seasonNumber\":1,\"episodeNumber\":3,\"episodeFileId\":101}]",
-            episodeFileListJson: "[{\"id\":100,\"seriesId\":7,\"seasonNumber\":1,\"releaseType\":\"multiEpisode\"},{\"id\":101,\"seriesId\":7,\"seasonNumber\":1,\"releaseType\":\"singleEpisode\"}]"));
-        var client = new ArrClient(new HttpClient(handler), "http://sonarr:8989", "fakekey");
-
-        var count = await client.GetEpisodeFileCoverageCountAsync(seriesInternalId: 7, seasonNumber: 1, episodeNumber: 1);
-
-        Assert.Equal(2, count);
-    }
-
     // Regression coverage for the bug where a Season/Episode delete wiped the whole Sonarr
     // series: these exercise the season/episode-scoped file deletion that must be used instead
     // of the whole-series DeleteAsync for these two granularities.

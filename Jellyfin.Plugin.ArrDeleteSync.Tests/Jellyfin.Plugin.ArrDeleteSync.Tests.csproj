@@ -18,4 +18,9 @@
   <ItemGroup>
     <ProjectReference Include="../Jellyfin.Plugin.ArrDeleteSync/Jellyfin.Plugin.ArrDeleteSync.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Real Sonarr API responses captured read-only from a live instance, so HTTP-level tests run
+         against the actual response shape instead of hand-written JSON. -->
+    <None Include="Fixtures/**/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

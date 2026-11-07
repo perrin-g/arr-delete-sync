@@ -129,6 +129,107 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         };
     }
 
+    // For a batch of season/episode deletes, finds each Sonarr series that would be left with zero
+    // monitored episodes once the selected items are deleted (season/episode deletes unmonitor
+    // what they remove). Read-only: it never changes anything. Any series whose lookup fails or
+    // isn't tracked is simply left out, so the UI shows no remove-series option for it.
+    public async Task<IReadOnlyList<SeriesImpact>> GetSeriesImpactAsync(IReadOnlyList<DeleteRequest> requests)
+    {
+        var bySeries = new Dictionary<string, List<(JellyfinItemInfo Item, DeleteGranularity Granularity)>>(StringComparer.Ordinal);
+        foreach (var request in requests)
+        {
+            if (request.Granularity is not (DeleteGranularity.Season or DeleteGranularity.Episode))
+            {
+                continue;
+            }
+
+            var item = _itemAccessor.GetItem(request.JellyfinItemId);
+            var tvdbId = item?.SeriesTvdbId ?? item?.TvdbId;
+            if (item?.SeriesItemId == null || item.SeasonNumber == null || string.IsNullOrEmpty(tvdbId))
+            {
+                continue;
+            }
+
+            if (request.Granularity == DeleteGranularity.Episode && item.EpisodeNumber == null)
+            {
+                continue;
+            }
+
+            if (!bySeries.TryGetValue(tvdbId!, out var list))
+            {
+                bySeries[tvdbId!] = list = new List<(JellyfinItemInfo, DeleteGranularity)>();
+            }
+
+            list.Add((item, request.Granularity));
+        }
+
+        var client = _arrClientFactory.GetClient(true);
+        var impacts = new List<SeriesImpact>();
+        foreach (var (tvdbId, items) in bySeries)
+        {
+            var lookup = await client.FindByProviderIdAsync("tvdbId", tvdbId, isSeries: true);
+            if (lookup.State != ArrTrackingState.Tracked || lookup.InternalId == null)
+            {
+                continue;
+            }
+
+            var state = await client.GetSeriesMonitorStateAsync(lookup.InternalId.Value);
+            if (state == null)
+            {
+                continue;
+            }
+
+            var selectedSeasons = items.Where(i => i.Granularity == DeleteGranularity.Season).Select(i => i.Item.SeasonNumber!.Value).ToHashSet();
+            var selectedEpisodes = items.Where(i => i.Granularity == DeleteGranularity.Episode).Select(i => (i.Item.SeasonNumber!.Value, i.Item.EpisodeNumber!.Value)).ToHashSet();
+
+            var remainingMonitored = state.SeriesMonitored && state.Episodes.Any(e =>
+                e.Monitored
+                && !selectedSeasons.Contains(e.SeasonNumber)
+                && !selectedEpisodes.Contains((e.SeasonNumber, e.EpisodeNumber)));
+
+            if (remainingMonitored)
+            {
+                continue;
+            }
+
+            impacts.Add(new SeriesImpact
+            {
+                SeriesItemId = items[0].Item.SeriesItemId!.Value,
+                SeriesName = items[0].Item.SeriesName ?? state.Title,
+                Ended = state.Ended,
+                FollowsNewSeasons = state.SeriesMonitored && state.MonitorsNewSeasons,
+                ItemIds = items.Select(i => i.Item.Id).ToList()
+            });
+        }
+
+        return impacts;
+    }
+
+    // Admin left "remove the whole series" unticked for a series the delete leaves with nothing
+    // monitored: switch Sonarr to monitor it and its new seasons, and record that in the Audit Log.
+    public async Task<bool> KeepFollowingAsync(Guid seriesItemId)
+    {
+        var item = _itemAccessor.GetItem(seriesItemId);
+        var tvdbId = item?.TvdbId ?? item?.SeriesTvdbId;
+        if (item == null || string.IsNullOrEmpty(tvdbId))
+        {
+            return false;
+        }
+
+        var client = _arrClientFactory.GetClient(true);
+        var lookup = await client.FindByProviderIdAsync("tvdbId", tvdbId!, isSeries: true);
+        if (lookup.State != ArrTrackingState.Tracked || lookup.InternalId == null)
+        {
+            await LogAsync(seriesItemId, item.Name, DeleteGranularity.Series, "FollowNewSeasons", "Failed", "Series not found in Sonarr", false, null);
+            return false;
+        }
+
+        var ok = await client.SetFollowNewSeasonsAsync(lookup.InternalId.Value);
+        await LogAsync(seriesItemId, item.Name, DeleteGranularity.Series, "FollowNewSeasons", ok ? "Success" : "Failed",
+            ok ? null : "Sonarr rejected the update to monitor new seasons", false, null);
+        return ok;
+    }
+
     public async Task<ResolutionResult> ResolveAsync(Guid jellyfinItemId, DeleteGranularity granularity)
     {
         var item = _itemAccessor.GetItem(jellyfinItemId);

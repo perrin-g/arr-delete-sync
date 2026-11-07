@@ -51,6 +51,7 @@
 
         <div id="BulkConfirmSection" class="verticalSection" style="display:none">
           <h2>Confirm delete</h2>
+          <div id="SeriesImpactList"></div>
           <div id="SafeItemsList"></div>
           <button is="emby-button" type="button" class="raised button-delete" id="DeleteSafeItemsButton" style="display:none">Delete safe items</button>
           <div id="NeedsConfirmationList"></div>
@@ -402,6 +403,10 @@
         }
 
         var confirmedSafeItems = [];
+        // Bulk-confirm state, kept so the remove-series tickboxes can re-render the lists.
+        var baseSafeItems = [];
+        var baseNeedsConfirmationItems = [];
+        var seriesImpacts = []; // { impact, resolution, removeSeries }
 
         function openBulkConfirm() {
           if (breakerTripped) {
@@ -425,7 +430,7 @@
               }
               resolvedCount++;
               if (resolvedCount === items.length) {
-                renderBulkConfirm(safeItems, needsConfirmationItems);
+                loadSeriesImpacts(safeItems, needsConfirmationItems);
               }
             }).catch(function (err) {
               console.error(err);
@@ -435,13 +440,123 @@
               // resolvedCount so a single failure can't hang the rest of the batch forever.
               resolvedCount++;
               if (resolvedCount === items.length) {
-                renderBulkConfirm(safeItems, needsConfirmationItems);
+                loadSeriesImpacts(safeItems, needsConfirmationItems);
               }
             });
           });
         }
 
-        function renderBulkConfirm(safeItems, needsConfirmationItems) {
+        // Asks the server which series this batch of season/episode deletes would leave with no
+        // monitored episodes, so the confirm step can offer "also remove the whole series". Any
+        // failure here just means no tickbox -- the delete then behaves exactly as before.
+        function loadSeriesImpacts(safeItems, needsConfirmationItems) {
+          baseSafeItems = safeItems;
+          baseNeedsConfirmationItems = needsConfirmationItems;
+          seriesImpacts = [];
+
+          var tvRequests = safeItems.concat(needsConfirmationItems)
+            .filter(function (item) { return item.granularity === "Season" || item.granularity === "Episode"; })
+            .map(function (item) { return { jellyfinItemId: item.id, granularity: item.granularity }; });
+
+          if (tvRequests.length === 0) {
+            renderBulkConfirm();
+            return;
+          }
+
+          fetchJson("series-impact", {
+            type: "POST",
+            contentType: "application/json",
+            data: JSON.stringify(tvRequests)
+          }).then(function (impacts) {
+            return Promise.all((impacts || []).map(function (impact) {
+              return fetchJson("resolve?itemId=" + impact.SeriesItemId + "&granularity=Series").then(function (resolution) {
+                // Ended series default to removal; continuing ones default to keep following.
+                seriesImpacts.push({ impact: impact, resolution: resolution, removeSeries: !!impact.Ended });
+              }).catch(function (err) {
+                console.error(err); // no tickbox for this series
+              });
+            }));
+          }).catch(function (err) {
+            console.error(err);
+          }).then(function () {
+            renderBulkConfirm();
+          });
+        }
+
+        function renderSeriesImpacts() {
+          var list = document.getElementById("SeriesImpactList");
+          list.innerHTML = "";
+          seriesImpacts.forEach(function (entry) {
+            var box = document.createElement("div");
+            box.style.border = "1px solid orange";
+            box.style.padding = "0.5em";
+            box.style.margin = "0.5em 0";
+
+            var msg = document.createElement("div");
+            msg.textContent = entry.impact.SeriesName + ": after this delete, no episodes in this series will be monitored.";
+            box.appendChild(msg);
+
+            if (entry.impact.Ended) {
+              var ended = document.createElement("div");
+              ended.style.color = "orange";
+              ended.textContent = "This series has ended — no new episodes or seasons are expected.";
+              box.appendChild(ended);
+            }
+
+            var label = document.createElement("label");
+            var checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = entry.removeSeries;
+            checkbox.onchange = function () {
+              entry.removeSeries = checkbox.checked;
+              renderBulkConfirm();
+            };
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(" Also remove the whole series (Sonarr, Jellyfin and the Seerr request)"));
+            box.appendChild(label);
+
+            var hint = document.createElement("div");
+            hint.style.opacity = "0.7";
+            hint.textContent = entry.removeSeries
+              ? "The selected seasons/episodes are replaced by one whole-series delete below."
+              : "Unticked: the series stays in Sonarr and keeps watching for new episodes and seasons.";
+            box.appendChild(hint);
+
+            if (!entry.removeSeries && !entry.impact.FollowsNewSeasons) {
+              var follow = document.createElement("div");
+              follow.style.color = "orange";
+              follow.textContent = "Sonarr is currently NOT set to download new seasons of this show. When you delete, it will be switched on (series monitored, Monitor New Seasons = All) so new seasons are picked up.";
+              box.appendChild(follow);
+            }
+
+            list.appendChild(box);
+          });
+        }
+
+        function renderBulkConfirm() {
+          // Items belonging to a series the admin chose to remove entirely are swapped for one
+          // Series-level delete (which goes through the usual typed confirmation).
+          var replacedIds = {};
+          var seriesItems = [];
+          seriesImpacts.forEach(function (entry) {
+            if (!entry.removeSeries) {
+              return;
+            }
+            entry.impact.ItemIds.forEach(function (id) { replacedIds[id] = true; });
+            seriesItems.push({
+              id: entry.impact.SeriesItemId,
+              name: entry.impact.SeriesName,
+              type: "Series",
+              granularity: "Series",
+              ancestorIds: [],
+              resolution: entry.resolution
+            });
+          });
+          var notReplaced = function (item) { return !replacedIds[item.id]; };
+          var safeItems = baseSafeItems.filter(notReplaced);
+          var needsConfirmationItems = baseNeedsConfirmationItems.filter(notReplaced).concat(seriesItems);
+
+          renderSeriesImpacts();
           confirmedSafeItems = safeItems;
 
           var safeList = document.getElementById("SafeItemsList");
@@ -514,6 +629,30 @@
             rows[item.id] = row;
           });
 
+          // Keep-following series touched by this batch whose Sonarr settings need switching on
+          // so new seasons download (told to the admin in the confirm step). Done once per series.
+          seriesImpacts.forEach(function (entry) {
+            if (entry.removeSeries || entry.impact.FollowsNewSeasons || entry.followApplied) {
+              return;
+            }
+            var touched = items.some(function (item) { return entry.impact.ItemIds.indexOf(item.id) !== -1; });
+            if (!touched) {
+              return;
+            }
+            entry.followApplied = true;
+            var followRow = document.createElement("div");
+            followRow.textContent = entry.impact.SeriesName + ": switching on new-season monitoring in Sonarr…";
+            resultsList.appendChild(followRow);
+            fetchJson("keep-following?seriesItemId=" + entry.impact.SeriesItemId, { type: "POST" }).then(function (result) {
+              followRow.textContent = entry.impact.SeriesName + (result && result.ok
+                ? ": Sonarr will now download new seasons"
+                : ": couldn't switch on new-season monitoring — set it in Sonarr manually (see Audit Log)");
+            }).catch(function (err) {
+              entry.followApplied = false;
+              followRow.textContent = entry.impact.SeriesName + ": couldn't switch on new-season monitoring — " + (err.message || "see browser console");
+            });
+          });
+
           var index = 0;
           var stoppedByBreaker = false;
 
@@ -522,7 +661,15 @@
               // Batch finished: clear delivered selections and refresh everything that
               // could have changed (lists, retry queue, audit log).
               document.getElementById("BulkInProgressWarning").style.display = "none";
-              items.forEach(function (item) { delete selectedItems[item.id]; });
+              items.forEach(function (item) {
+                delete selectedItems[item.id];
+                // A whole-series delete also covers any of its seasons/episodes still selected.
+                Object.keys(selectedItems).forEach(function (id) {
+                  if ((selectedItems[id].ancestorIds || []).indexOf(item.id) !== -1) {
+                    delete selectedItems[id];
+                  }
+                });
+              });
               updateSelectionBar();
               loadMoviesTab();
               loadTvTab();

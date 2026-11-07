@@ -107,6 +107,87 @@ public class ArrClient : IArrClient
         return episodes.Count(e => e.EpisodeFileId == match.EpisodeFileId);
     }
 
+    // Null on any failure -- the caller treats that as "can't tell" and offers no remove-series
+    // option, so a Sonarr hiccup can never lead to a whole series being removed by surprise.
+    public async Task<SeriesMonitorState?> GetSeriesMonitorStateAsync(int seriesInternalId)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v3/series/{seriesInternalId}");
+            request.Headers.Add("X-Api-Key", _apiKey);
+            using var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = doc.RootElement;
+            var title = root.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty;
+            var status = root.TryGetProperty("status", out var st) ? st.GetString() : null;
+            var seriesMonitored = root.TryGetProperty("monitored", out var m) && m.ValueKind == JsonValueKind.True;
+            var monitorNewItems = root.TryGetProperty("monitorNewItems", out var mni) ? mni.GetString() : null;
+
+            var episodes = await FetchEpisodesAsync(seriesInternalId);
+            if (episodes == null)
+            {
+                return null;
+            }
+
+            return new SeriesMonitorState
+            {
+                Title = title,
+                Ended = string.Equals(status, "ended", StringComparison.OrdinalIgnoreCase),
+                SeriesMonitored = seriesMonitored,
+                MonitorsNewSeasons = string.Equals(monitorNewItems, "all", StringComparison.OrdinalIgnoreCase),
+                Episodes = episodes.Select(e => new MonitoredEpisode(e.SeasonNumber, e.EpisodeNumber, e.Monitored)).ToList()
+            };
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    // "Keep following" after a delete leaves nothing monitored: make sure Sonarr will actually
+    // download new seasons -- series monitored + Monitor New Seasons = all. Sonarr's PUT takes the
+    // whole series resource, so read it, change just those two fields, and send it back unchanged
+    // otherwise (no moveFiles, so the path is never touched).
+    public async Task<bool> SetFollowNewSeasonsAsync(int seriesInternalId)
+    {
+        var url = $"{_baseUrl}/api/v3/series/{seriesInternalId}";
+        try
+        {
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, url);
+            getRequest.Headers.Add("X-Api-Key", _apiKey);
+            using var getResponse = await _httpClient.SendAsync(getRequest);
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            if (System.Text.Json.Nodes.JsonNode.Parse(await getResponse.Content.ReadAsStringAsync()) is not System.Text.Json.Nodes.JsonObject series)
+            {
+                return false;
+            }
+
+            series["monitored"] = true;
+            series["monitorNewItems"] = "all";
+
+            using var putRequest = new HttpRequestMessage(HttpMethod.Put, url)
+            {
+                Content = new StringContent(series.ToJsonString(), System.Text.Encoding.UTF8, "application/json")
+            };
+            putRequest.Headers.Add("X-Api-Key", _apiKey);
+            using var putResponse = await _httpClient.SendAsync(putRequest);
+            return putResponse.IsSuccessStatusCode;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     // Deletes every distinct episode file in the given season, without touching the series or
     // any other season -- unlike DeleteAsync (whole series/movie), used only for Movie/Series
     // granularity. Attempts every file even if one delete fails, rather than stopping at the
@@ -185,7 +266,7 @@ public class ArrClient : IArrClient
         return await SetEpisodesMonitoredAsync(new List<int> { match.Id }, monitored: false);
     }
 
-    private readonly record struct EpisodeRecord(int Id, int SeasonNumber, int EpisodeNumber, int EpisodeFileId);
+    private readonly record struct EpisodeRecord(int Id, int SeasonNumber, int EpisodeNumber, int EpisodeFileId, bool Monitored);
 
     private async Task<List<EpisodeRecord>?> FetchEpisodesAsync(int seriesInternalId)
     {
@@ -212,7 +293,8 @@ public class ArrClient : IArrClient
                 var season = episode.TryGetProperty("seasonNumber", out var s) ? s.GetInt32() : -1;
                 var number = episode.TryGetProperty("episodeNumber", out var e) ? e.GetInt32() : -1;
                 var fileId = episode.TryGetProperty("episodeFileId", out var fileIdProp) ? fileIdProp.GetInt32() : 0;
-                episodes.Add(new EpisodeRecord(id, season, number, fileId));
+                var monitored = episode.TryGetProperty("monitored", out var monitoredProp) && monitoredProp.ValueKind == JsonValueKind.True;
+                episodes.Add(new EpisodeRecord(id, season, number, fileId, monitored));
             }
 
             return episodes;
