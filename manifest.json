@@ -9,6 +9,14 @@
     "owner": "perrin-g",
     "versions": [
       {
+        "checksum": "cb7f7dd41dd136effe1f48119ad94bd7",
+        "changelog": "",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://github.com/perrin-g/arr-delete-sync/releases/download/v1.4.0/ArrDeleteSync_1.4.0.0.zip",
+        "timestamp": "2026-11-08T00:25:12.0000000Z",
+        "version": "1.4.0.0"
+      },
+      {
         "checksum": "3cd30cc5569359e12b2690b6394f1b77",
         "changelog": "",
         "targetAbi": "12.0.0.0",
