@@ -183,7 +183,12 @@ public class SeerrClient : ISeerrClient
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            // Seerr's request validator answers a bodiless POST with 415 "unsupported media type";
+            // it needs a JSON body, and an empty object is enough (is4k defaults to false).
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+            };
             request.Headers.Add("X-Api-Key", _apiKey);
             using var response = await _httpClient.SendAsync(request);
             return response.IsSuccessStatusCode;

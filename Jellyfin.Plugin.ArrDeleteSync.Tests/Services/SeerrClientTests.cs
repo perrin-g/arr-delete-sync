@@ -123,10 +123,26 @@ public class SeerrClientTests
         Assert.Contains("/api/v1/media/11", handler.LastRequest.RequestUri!.ToString());
     }
 
-    [Fact]
-    public async Task MarkPartiallyAvailable_CallsPostPartialEndpoint()
+    // Mirrors real Seerr v3.5.1 (captured 2026-11-08 against media 153): its request validator
+    // rejects POST /api/v1/media/{id}/{status} with 415 unless the body is JSON -- even an
+    // empty object is enough. A bodiless POST got exactly this response live.
+    private static HttpResponseMessage SeerrV351StatusRoute(HttpRequestMessage req)
     {
-        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK));
+        if (req.Content?.Headers.ContentType?.MediaType != "application/json")
+        {
+            return new HttpResponseMessage(HttpStatusCode.UnsupportedMediaType)
+            {
+                Content = new StringContent("{\"message\":\"unsupported media type undefined\",\"errors\":[{\"path\":\"/api/v1/media/:mediaId/:status\",\"message\":\"unsupported media type undefined\"}]}")
+            };
+        }
+
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"id\":11,\"mediaType\":\"tv\",\"status\":4}") };
+    }
+
+    [Fact]
+    public async Task MarkPartiallyAvailable_PostsJsonBodyToPartialEndpoint_AsRealSeerrRequires()
+    {
+        var handler = new FakeHttpMessageHandler(SeerrV351StatusRoute);
         var client = new SeerrClient(new HttpClient(handler), "http://seerr:5055", "fakekey");
 
         var success = await client.MarkPartiallyAvailableAsync(11);
