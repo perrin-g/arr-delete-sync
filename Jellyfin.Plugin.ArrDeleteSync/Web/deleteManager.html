@@ -385,6 +385,14 @@
                 });
               };
               confirmRow.appendChild(confirmBtn);
+              var cancelBtn = makeSlimButton("Cancel");
+              cancelBtn.onclick = function () {
+                confirmRow.style.display = "none";
+                input.value = "";
+                confirmBtn.disabled = true;
+                confirmBtn.style.opacity = "0.5";
+              };
+              confirmRow.appendChild(cancelBtn);
               row.appendChild(confirmRow);
 
               stopBtn.onclick = function () {
