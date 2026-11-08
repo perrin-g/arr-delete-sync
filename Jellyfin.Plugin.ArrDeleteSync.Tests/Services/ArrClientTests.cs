@@ -29,6 +29,17 @@ public class FakeHttpMessageHandler : HttpMessageHandler
 
 public class ArrClientTests
 {
+    // A season delete finishes by switching the season's own Monitored flag off, which GETs and
+    // PUTs the whole series record. Season-delete tests serve the real captured Sonarr 4.0.20
+    // record (Fawlty Towers: seasons 0, 1, 2) for that GET instead of a hand-written one.
+    private static HttpResponseMessage? RealSeriesRecord(HttpRequestMessage req) =>
+        req.Method == HttpMethod.Get && System.Text.RegularExpressions.Regex.IsMatch(req.RequestUri!.AbsolutePath, @"^/api/v3/series/\d+$")
+            ? new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(System.IO.File.ReadAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "sonarr-4.0.20", "series-fawlty.json")))
+            }
+            : null;
+
     [Fact]
     public async Task FindByProviderId_ReturnsTracked_WhenArrReturnsAMatch()
     {
@@ -154,6 +165,8 @@ public class ArrClientTests
         var deletedIds = new List<int>();
         var handler = new FakeHttpMessageHandler(req =>
         {
+            if (RealSeriesRecord(req) is { } series) return series;
+
             if (req.Method == HttpMethod.Delete)
             {
                 deletedIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
@@ -182,6 +195,8 @@ public class ArrClientTests
         var deletedIds = new List<int>();
         var handler = new FakeHttpMessageHandler(req =>
         {
+            if (RealSeriesRecord(req) is { } series) return series;
+
             if (req.Method == HttpMethod.Delete)
             {
                 deletedIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
@@ -207,7 +222,7 @@ public class ArrClientTests
     [Fact]
     public async Task DeleteSeasonFiles_ReturnsTrue_WhenSeasonHasNoFiles()
     {
-        var handler = new FakeHttpMessageHandler(req => new HttpResponseMessage(HttpStatusCode.OK)
+        var handler = new FakeHttpMessageHandler(req => RealSeriesRecord(req) ?? new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("[{\"seasonNumber\":2,\"episodeNumber\":1,\"episodeFileId\":200}]")
         });
@@ -339,10 +354,20 @@ public class ArrClientTests
         List<string> monitorRequestBodies,
         bool monitorShouldSucceed = true)
     {
+        if (RealSeriesRecord(req) is { } series)
+        {
+            return series;
+        }
+
         if (req.Method == HttpMethod.Delete)
         {
             deletedFileIds.Add(int.Parse(req.RequestUri!.Segments.Last()));
             return new HttpResponseMessage(HttpStatusCode.OK);
+        }
+
+        if (req.Method == HttpMethod.Put && req.RequestUri!.AbsolutePath.StartsWith("/api/v3/series/"))
+        {
+            return new HttpResponseMessage(HttpStatusCode.Accepted); // season-flag PUT; covered by SonarrFixtureTests
         }
 
         if (req.Method == HttpMethod.Put)

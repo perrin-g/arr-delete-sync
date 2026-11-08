@@ -136,6 +136,34 @@ public class SonarrFixtureTests
         Assert.True(JsonNode.DeepEquals(expected, sent), "PUT body must be the real series resource with only monitored/monitorNewItems changed");
     }
 
+    [Fact]
+    public async Task DeleteSeasonFiles_Fawlty_S1_DeletesItsFiles_UnmonitorsEpisodesAndTheSeasonItself()
+    {
+        var (client, sonarr) = MakeClient();
+
+        Assert.True(await client.DeleteSeasonFilesAsync(8, 1));
+
+        // The six real S1 files, each once.
+        Assert.Equal(
+            new[] { 108, 110, 111, 114, 116, 118 }.Select(id => $"/api/v3/episodefile/{id}").OrderBy(u => u),
+            sonarr.Deletes.OrderBy(u => u));
+
+        var episodePut = Assert.Single(sonarr.Puts, p => p.Url == "/api/v3/episode/monitor");
+        var episodeBody = JsonNode.Parse(episodePut.Body)!.AsObject();
+        Assert.False(episodeBody["monitored"]!.GetValue<bool>());
+        var s1EpisodeIds = JsonNode.Parse(Fixture("episodes-fawlty.json"))!.AsArray()
+            .Where(e => e!["seasonNumber"]!.GetValue<int>() == 1)
+            .Select(e => e!["id"]!.GetValue<int>()).OrderBy(i => i);
+        Assert.Equal(s1EpisodeIds, episodeBody["episodeIds"]!.AsArray().Select(i => i!.GetValue<int>()).OrderBy(i => i));
+
+        // Season 1's own Monitored flag goes off; the rest of the real series record is untouched.
+        var seriesPut = Assert.Single(sonarr.Puts, p => p.Url == "/api/v3/series/8");
+        var expected = JsonNode.Parse(Fixture("series-fawlty.json"))!.AsObject();
+        expected["seasons"]!.AsArray().Single(x => x!["seasonNumber"]!.GetValue<int>() == 1)!["monitored"] = false;
+        Assert.True(JsonNode.DeepEquals(expected, JsonNode.Parse(seriesPut.Body)),
+            "PUT body must be the real series resource with only season 1's monitored flag changed");
+    }
+
     // ---- full impact check: real ArrClient + real responses ----
 
     private static readonly Guid FromSeriesItem = Guid.NewGuid();
