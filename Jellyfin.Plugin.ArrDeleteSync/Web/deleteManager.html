@@ -15,7 +15,7 @@
           </div>
 
           <div id="MoviesTab">
-            <input is="emby-input" type="text" id="MoviesFilter" label="Filter movies" />
+            <input is="emby-input" type="text" id="MoviesFilter" label="Movies" placeholder="Search movies…" style="background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23aaa' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cline x1='15.5' y1='15.5' x2='21' y2='21'/%3E%3C/svg%3E&quot;); background-repeat:no-repeat; background-position:0.7em center; background-size:1.2em; padding-left:2.4em;" />
             <div id="MoviesList"></div>
             <div style="display:flex; align-items:center; gap:1em; margin-top:0.5em;">
               <button is="emby-button" type="button" class="raised" id="MoviesPrevPage">Prev</button>
@@ -33,7 +33,7 @@
            <!-- Two equal columns split at the same point (and gap) as the Movies/TV buttons above. -->
            <div style="display:flex; flex-wrap:wrap; gap:0.5em; align-items:flex-start;">
            <div style="flex:1 1 20em; min-width:0;">
-            <input is="emby-input" type="text" id="TvFilter" label="Filter series" />
+            <input is="emby-input" type="text" id="TvFilter" label="Series" placeholder="Search series…" style="background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23aaa' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cline x1='15.5' y1='15.5' x2='21' y2='21'/%3E%3C/svg%3E&quot;); background-repeat:no-repeat; background-position:0.7em center; background-size:1.2em; padding-left:2.4em;" />
             <div id="TvList"></div>
             <div style="display:flex; align-items:center; gap:1em; margin-top:0.5em;">
               <button is="emby-button" type="button" class="raised" id="TvPrevPage">Prev</button>
@@ -49,7 +49,7 @@
             </div>
            </div>
             <div id="FollowedSection" style="display:none; flex:1 1 20em; min-width:0;">
-              <input is="emby-input" type="text" id="FollowedFilter" label="Followed — no episodes yet" />
+              <input is="emby-input" type="text" id="FollowedFilter" label="Followed — no episodes yet" placeholder="Search followed…" style="background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23aaa' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cline x1='15.5' y1='15.5' x2='21' y2='21'/%3E%3C/svg%3E&quot;); background-repeat:no-repeat; background-position:0.7em center; background-size:1.2em; padding-left:2.4em;" />
               <div id="FollowedList"></div>
             </div>
            </div>
