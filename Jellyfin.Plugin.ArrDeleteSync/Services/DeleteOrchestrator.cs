@@ -89,6 +89,7 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             ProviderIdType = resolution.ProviderIdType,
             ProviderIdValue = resolution.ProviderIdValue,
             SeerrMediaId = resolution.SeerrMediaId,
+            SeerrTmdbId = resolution.SeerrTmdbId,
             SeasonNumber = seasonNumber,
             EpisodeNumber = episodeNumber,
             ArrDeleteStatus = arrStatus,
@@ -383,6 +384,13 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             {
                 result.SeerrMediaId = seerrResult.MediaId;
             }
+            else if (seerrResult.State == ArrTrackingState.Indeterminate && _seerrClient.IsConfigured)
+            {
+                // Couldn't reach Seerr (or it errored). That's not "not in Seerr": the Seerr step is
+                // still owed, so the delete must end Partial and retry the lookup later.
+                result.SeerrUnreachable = true;
+                result.SeerrTmdbId = tmdbInt;
+            }
         }
 
         return result;
@@ -579,15 +587,21 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         }
 
         bool seerrUpdated = true;
+        string seerrError = "Seerr update failed";
         // Keeping the series means its Seerr request stays as it is (new seasons still belong to it).
-        if (resolution.SeerrMediaId.HasValue && request.Granularity != DeleteGranularity.AllEpisodesKeepSeries)
+        var keepsSeries = request.Granularity == DeleteGranularity.AllEpisodesKeepSeries;
+        if (resolution.SeerrMediaId.HasValue && !keepsSeries)
         {
             seerrUpdated = await UpdateSeerrAvailabilityAsync(_seerrClient, request.Granularity, resolution.SeerrMediaId.Value);
+        }
+        else if (resolution.SeerrUnreachable && !keepsSeries)
+        {
+            seerrUpdated = false;
+            seerrError = "Seerr unreachable";
         }
 
         if (!seerrUpdated)
         {
-            const string seerrError = "Seerr update failed";
             var entry = MakeRetryEntry(
                 request.JellyfinItemId, itemName, request.Granularity, resolution, seerrError,
                 arrStatus: DeleteStepStatus.Succeeded,
@@ -708,6 +722,20 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
             if (entry.SeerrMediaId.HasValue)
             {
                 seerrOk = await UpdateSeerrAvailabilityAsync(_seerrClient, entry.Granularity, entry.SeerrMediaId.Value);
+            }
+            else if (entry.SeerrTmdbId.HasValue)
+            {
+                // Seerr was unreachable during the delete: look the item up now.
+                var seerrLookup = await _seerrClient.FindByTmdbIdAsync(entry.SeerrTmdbId.Value, isSeries);
+                if (seerrLookup.State == ArrTrackingState.ConfirmedNotTracked)
+                {
+                    seerrOk = true;
+                }
+                else if (seerrLookup.State == ArrTrackingState.Tracked && seerrLookup.MediaId.HasValue)
+                {
+                    entry.SeerrMediaId = seerrLookup.MediaId;
+                    seerrOk = await UpdateSeerrAvailabilityAsync(_seerrClient, entry.Granularity, seerrLookup.MediaId.Value);
+                }
             }
             else if (entry.ProviderIdType == "tmdbId" && int.TryParse(entry.ProviderIdValue, out var tmdbInt))
             {

@@ -9,6 +9,8 @@ public class RetryQueueEntry
     public string? ProviderIdType { get; set; }
     public string? ProviderIdValue { get; set; }
     public int? SeerrMediaId { get; set; }
+    // Set when Seerr couldn't be reached during the delete, so the retry can look the item up then.
+    public int? SeerrTmdbId { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
     public DeleteStepStatus ArrDeleteStatus { get; set; } = DeleteStepStatus.Pending;

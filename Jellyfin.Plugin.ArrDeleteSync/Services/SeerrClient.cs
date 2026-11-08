@@ -21,6 +21,8 @@ public class SeerrClient : ISeerrClient
         _apiKey = apiKey;
     }
 
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(_baseUrl);
+
     public async Task<SeerrLookupResult> FindByTmdbIdAsync(int tmdbId, bool isTv)
     {
         var resource = isTv ? "tv" : "movie";
