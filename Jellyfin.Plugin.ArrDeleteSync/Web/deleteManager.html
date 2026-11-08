@@ -901,6 +901,7 @@
                 fetchJson("retry-queue/" + entry.Id + "/retry", { type: "POST" }).then(function () {
                   refreshRetryQueue();
                   refreshBreakerStatus();
+                  refreshAuditLog(); // a retry that finishes the job adds "Retry — Success"
                 }).catch(function (err) {
                   console.error(err);
                   Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
@@ -920,7 +921,7 @@
                     return;
                   }
                 }
-                fetchJson("retry-queue/" + entry.Id + "/dismiss", { type: "POST" }).then(refreshRetryQueue).catch(function (err) {
+                fetchJson("retry-queue/" + entry.Id + "/dismiss", { type: "POST" }).then(function () { refreshRetryQueue(); refreshAuditLog(); }).catch(function (err) {
                   console.error(err);
                   Dashboard.alert("Request failed: " + (err.message || "see browser console for details"));
                 });
