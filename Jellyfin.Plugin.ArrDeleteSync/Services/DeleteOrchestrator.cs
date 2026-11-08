@@ -743,6 +743,9 @@ public partial class DeleteOrchestrator : IDeleteOrchestrator
         if (fullyResolved)
         {
             _circuitBreaker.RecordSuccess();
+            // The first attempt logged "Partial"; record that a retry finished the job. Still-failing
+            // retries aren't logged each time -- they stay visible in the Retry Queue instead.
+            await LogAsync(entry.JellyfinItemId, entry.ItemDisplayName ?? entry.JellyfinItemId.ToString(), entry.Granularity, "Retry", "Success", null, entry.RequiresManualFileCleanup, entry.FilePath);
         }
         else
         {

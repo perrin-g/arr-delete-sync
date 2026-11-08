@@ -307,6 +307,53 @@ public class DeleteOrchestratorRetryTests
     }
 
     [Fact]
+    public async Task ProcessRetry_GeneralBranch_SeerrStepSucceedsOnRetry_WritesSuccessAuditEntry()
+    {
+        // The first attempt logged "Partial"; once a retry finishes the job the Audit Log must
+        // say so, otherwise the item looks permanently half-done.
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        seerr.Setup(s => s.MarkPartiallyAvailableAsync(153)).ReturnsAsync(true);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var itemId = Guid.NewGuid();
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = itemId, ItemDisplayName = "Chef's Table - Season 2", Granularity = DeleteGranularity.Season,
+            ProviderIdType = "tvdbId", ProviderIdValue = "268972", SeasonNumber = 2, SeerrMediaId = 153,
+            ArrDeleteStatus = DeleteStepStatus.Succeeded, JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
+            SeerrUpdateStatus = DeleteStepStatus.Failed, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        Assert.True(await orchestrator.ProcessRetryEntryAsync(entry));
+
+        audit.Verify(a => a.AppendAsync(It.Is<AuditLogEntry>(e =>
+            e.Action == "Retry" && e.Outcome == "Success" && e.JellyfinItemId == itemId &&
+            e.ItemDisplayName == "Chef's Table - Season 2" && e.Granularity == DeleteGranularity.Season)), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessRetry_GeneralBranch_StillFailing_WritesNoAuditEntry()
+    {
+        // Retries run every few minutes; a still-failing one stays visible in the Retry Queue
+        // rather than adding an Audit Log line each time.
+        var (accessor, arr, seerr, queue, audit, breaker) = MakeMocks();
+        seerr.Setup(s => s.MarkPartiallyAvailableAsync(153)).ReturnsAsync(false);
+
+        var orchestrator = new DeleteOrchestrator(accessor.Object, MakeArrClientFactory(arr.Object), seerr.Object, queue.Object, audit.Object, breaker.Object);
+        var entry = new RetryQueueEntry
+        {
+            Id = Guid.NewGuid(), JellyfinItemId = Guid.NewGuid(), ItemDisplayName = "Chef's Table - Season 2", Granularity = DeleteGranularity.Season,
+            ProviderIdType = "tvdbId", ProviderIdValue = "268972", SeasonNumber = 2, SeerrMediaId = 153,
+            ArrDeleteStatus = DeleteStepStatus.Succeeded, JellyfinCleanupStatus = DeleteStepStatus.Succeeded,
+            SeerrUpdateStatus = DeleteStepStatus.Failed, NextRetryAtUtc = DateTime.UtcNow
+        };
+
+        Assert.False(await orchestrator.ProcessRetryEntryAsync(entry));
+
+        audit.Verify(a => a.AppendAsync(It.IsAny<AuditLogEntry>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ProcessRetry_GeneralBranch_SeerrFailed_NoStoredSeerrMediaId_LegacyMovieEntry_LooksUpByTmdbIdAndResets()
     {
         // Legacy movie entries still carry the tmdbId, so the Seerr record can be found and
